@@ -6,15 +6,16 @@ import android.graphics.Color
 
 class TrailProcessor {
 
-    private val trailBuffer = ArrayDeque<IntArray>()
     private var currentWidth = 0
     private var currentHeight = 0
 
-    private var cachedPixelBuffer: IntArray? = null
-    private var cachedMaskBuffer: IntArray? = null
-    private var cachedTrailBitmaps = mutableListOf<Bitmap>()
-    private var cachedOutput: Bitmap? = null
-    private var cachedOutputCanvas: Canvas? = null
+    private var pixelBuf: IntArray? = null
+    private var trailPixels: IntArray? = null
+    private var trailAge: ByteArray? = null
+    private var trailBitmap: Bitmap? = null
+    private var trailCanvas: Canvas? = null
+    private var outputBitmap: Bitmap? = null
+    private var outputCanvas: Canvas? = null
 
     var threshold: Float = 0.5f
         set(value) { field = value.coerceIn(0f, 1f) }
@@ -29,95 +30,79 @@ class TrailProcessor {
         if (width != currentWidth || height != currentHeight) {
             currentWidth = width
             currentHeight = height
-            trailBuffer.clear()
-            cachedPixelBuffer = null
-            cachedMaskBuffer = null
-            cachedOutput = null
-            cachedOutputCanvas = null
-            cachedTrailBitmaps.forEach { it.recycle() }
-            cachedTrailBitmaps.clear()
+            val size = width * height
+            pixelBuf = IntArray(size)
+            trailPixels = IntArray(size)
+            trailAge = ByteArray(size)
+            trailBitmap?.recycle()
+            trailBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            trailCanvas = Canvas(trailBitmap!!)
+            outputBitmap?.recycle()
+            outputBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            outputCanvas = Canvas(outputBitmap!!)
         }
 
+        val pBuf = pixelBuf!!
+        val tPix = trailPixels!!
+        val tAge = trailAge!!
         val size = width * height
 
-        var pixelBuf = cachedPixelBuffer
-        if (pixelBuf == null || pixelBuf.size != size) {
-            pixelBuf = IntArray(size)
-            cachedPixelBuffer = pixelBuf
-        }
-
-        var maskBuf = cachedMaskBuffer
-        if (maskBuf == null || maskBuf.size != size) {
-            maskBuf = IntArray(size)
-            cachedMaskBuffer = maskBuf
-        }
-
-        extractBrightPixels(frame, pixelBuf, maskBuf, width, height)
-
-        // Copy mask into a stable array for the trail buffer (mask is reused next frame)
-        val trailMask = IntArray(size)
-        maskBuf.copyInto(trailMask)
-
-        trailBuffer.addLast(trailMask)
-        while (trailBuffer.size > trailLength) {
-            trailBuffer.removeFirst()
-        }
-
-        var output = cachedOutput
-        if (output == null || output.isRecycled || output.width != width || output.height != height) {
-            output?.recycle()
-            output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            cachedOutput = output
-            cachedOutputCanvas = Canvas(output)
-        }
-
-        val canvas = cachedOutputCanvas!!
-        canvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
-        canvas.drawBitmap(frame, 0f, 0f, null)
-
-        // Ensure we have enough cached trail bitmaps
-        while (cachedTrailBitmaps.size < trailBuffer.size - 1) {
-            cachedTrailBitmaps.add(Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888))
-        }
-
-        for (i in 0 until trailBuffer.size - 1) {
-            val trail = trailBuffer[i]
-            val trailBitmap = cachedTrailBitmaps[i]
-            trailBitmap.setPixels(trail, 0, width, 0, 0, width, height)
-            canvas.drawBitmap(trailBitmap, 0f, 0f, null)
-        }
-
-        return output
-    }
-
-    private fun extractBrightPixels(frame: Bitmap, pixelBuf: IntArray, maskBuf: IntArray, width: Int, height: Int) {
-        frame.getPixels(pixelBuf, 0, width, 0, 0, width, height)
+        frame.getPixels(pBuf, 0, width, 0, 0, width, height)
 
         val thresholdValue = 255 - (threshold * 255).toInt()
 
-        for (i in pixelBuf.indices) {
-            val pixel = pixelBuf[i]
+        // Age existing trail pixels and clear expired ones
+        // age 0 = no trail, age 1 = fresh, age > 1 = aging, age > trailLength = expired
+        for (i in 0 until size) {
+            val age = tAge[i].toInt()
+            if (age > 0) {
+                tAge[i] = (age + 1).toByte()
+                if (age + 1 > trailLength) {
+                    tAge[i] = 0
+                    tPix[i] = Color.TRANSPARENT
+                }
+            }
+        }
+
+        // Write new bright pixels at age 1, replacing whatever was there
+        for (i in 0 until size) {
+            val pixel = pBuf[i]
             val r = Color.red(pixel)
             val g = Color.green(pixel)
             val b = Color.blue(pixel)
             val brightness = (r * 0.299 + g * 0.587 + b * 0.114).toInt()
 
             if (brightness > thresholdValue) {
-                maskBuf[i] = pixel or 0xFF000000.toInt()
-            } else {
-                maskBuf[i] = Color.TRANSPARENT
+                tPix[i] = pixel or 0xFF000000.toInt()
+                tAge[i] = 1
             }
         }
+
+        // Update trail bitmap from pixel data
+        trailBitmap!!.setPixels(tPix, 0, width, 0, 0, width, height)
+
+        // Composite: current frame + trail overlay
+        val canvas = outputCanvas!!
+        canvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+        canvas.drawBitmap(frame, 0f, 0f, null)
+        canvas.drawBitmap(trailBitmap!!, 0f, 0f, null)
+
+        return outputBitmap!!
     }
 
     fun clear() {
-        trailBuffer.clear()
-        cachedOutput?.recycle()
-        cachedOutput = null
-        cachedOutputCanvas = null
-        cachedTrailBitmaps.forEach { it.recycle() }
-        cachedTrailBitmaps.clear()
-        cachedPixelBuffer = null
-        cachedMaskBuffer = null
+        trailPixels?.fill(Color.TRANSPARENT)
+        trailAge?.fill(0)
+        outputBitmap?.recycle()
+        outputBitmap = null
+        outputCanvas = null
+        trailBitmap?.recycle()
+        trailBitmap = null
+        trailCanvas = null
+        pixelBuf = null
+        trailPixels = null
+        trailAge = null
+        currentWidth = 0
+        currentHeight = 0
     }
 }
