@@ -16,6 +16,9 @@ class TrailProcessor {
     private var trailCanvas: Canvas? = null
     private var outputBitmap: Bitmap? = null
     private var outputCanvas: Canvas? = null
+    private var rotatedBitmap: Bitmap? = null
+    private var rotatedCanvas: Canvas? = null
+    private var sensorOrientation: Int = 0
 
     var threshold: Float = 0.5f
         set(value) { field = value.coerceIn(0f, 1f) }
@@ -23,9 +26,10 @@ class TrailProcessor {
     var trailLength: Int = 3
         set(value) { field = value.coerceAtLeast(1) }
 
-    fun processFrame(frame: Bitmap): Bitmap {
+    fun processFrame(frame: Bitmap, orientation: Int = 0): Bitmap {
         val width = frame.width
         val height = frame.height
+        sensorOrientation = orientation
 
         if (width != currentWidth || height != currentHeight) {
             currentWidth = width
@@ -40,6 +44,12 @@ class TrailProcessor {
             outputBitmap?.recycle()
             outputBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             outputCanvas = Canvas(outputBitmap!!)
+            rotatedBitmap?.recycle()
+            val isRotated = orientation == 90 || orientation == 270
+            val rw = if (isRotated) height else width
+            val rh = if (isRotated) width else height
+            rotatedBitmap = Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888)
+            rotatedCanvas = Canvas(rotatedBitmap!!)
         }
 
         val pBuf = pixelBuf!!
@@ -51,8 +61,6 @@ class TrailProcessor {
 
         val thresholdValue = 255 - (threshold * 255).toInt()
 
-        // Age existing trail pixels and clear expired ones
-        // age 0 = no trail, age 1 = fresh, age > 1 = aging, age > trailLength = expired
         for (i in 0 until size) {
             val age = tAge[i].toInt()
             if (age > 0) {
@@ -64,7 +72,6 @@ class TrailProcessor {
             }
         }
 
-        // Write new bright pixels at age 1, replacing whatever was there
         for (i in 0 until size) {
             val pixel = pBuf[i]
             val r = Color.red(pixel)
@@ -78,16 +85,26 @@ class TrailProcessor {
             }
         }
 
-        // Update trail bitmap from pixel data
         trailBitmap!!.setPixels(tPix, 0, width, 0, 0, width, height)
 
-        // Composite: current frame + trail overlay
         val canvas = outputCanvas!!
         canvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
         canvas.drawBitmap(frame, 0f, 0f, null)
         canvas.drawBitmap(trailBitmap!!, 0f, 0f, null)
 
-        return outputBitmap!!
+        val rCanvas = rotatedCanvas!!
+        rCanvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+
+        val matrix = android.graphics.Matrix()
+        matrix.setRotate(sensorOrientation.toFloat(), outputBitmap!!.width / 2f, outputBitmap!!.height / 2f)
+        val srcRect = android.graphics.RectF(0f, 0f, outputBitmap!!.width.toFloat(), outputBitmap!!.height.toFloat())
+        matrix.mapRect(srcRect)
+        val dx = (rotatedBitmap!!.width - srcRect.width()) / 2f - srcRect.left
+        val dy = (rotatedBitmap!!.height - srcRect.height()) / 2f - srcRect.top
+        matrix.postTranslate(dx, dy)
+        rCanvas.drawBitmap(outputBitmap!!, matrix, null)
+
+        return rotatedBitmap!!
     }
 
     fun clear() {
@@ -96,6 +113,9 @@ class TrailProcessor {
         outputBitmap?.recycle()
         outputBitmap = null
         outputCanvas = null
+        rotatedBitmap?.recycle()
+        rotatedBitmap = null
+        rotatedCanvas = null
         trailBitmap?.recycle()
         trailBitmap = null
         trailCanvas = null

@@ -3,12 +3,14 @@ package com.mitchelllustig.openpixelcamera.ui
 import android.Manifest
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.RectF
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -20,13 +22,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.windowInsetsPadding
 import com.mitchelllustig.openpixelcamera.camera.CameraController
 import com.mitchelllustig.openpixelcamera.processing.TrailProcessor
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 private const val PREFS_NAME = "open_pixel_camera"
 private const val KEY_ISO_POSITION = "iso_position"
@@ -106,13 +103,12 @@ fun CameraScreen() {
                     onIsoRangeReady = { lower, upper ->
                         isoRange = lower.toFloat()..upper.toFloat()
                         isoPosition = isoToPosition(isoFromPosition(isoPosition))
+                        cameraController.updateIso(isoFromPosition(isoPosition))
                     },
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
                         .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .border(2.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
                 )
 
                 Controls(
@@ -149,60 +145,73 @@ private fun CameraPreview(
     onIsoRangeReady: (lower: Int, upper: Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val scope = rememberCoroutineScope()
-    var latestFrame by remember { mutableStateOf<Bitmap?>(null) }
     var isoRangeReported by remember { mutableStateOf(false) }
+    var surfaceHolder by remember { mutableStateOf<SurfaceHolder?>(null) }
 
-    AndroidView(
-        factory = { context ->
-            SurfaceView(context).apply {
-                holder.addCallback(object : SurfaceHolder.Callback {
-                    override fun surfaceCreated(holder: SurfaceHolder) {
-                        cameraController.onFrameAvailable = { frame ->
-                            if (!isoRangeReported) {
-                                isoRangeReported = true
-                                val range = cameraController.isoRange
-                                onIsoRangeReady(range.lower, range.upper)
-                            }
-                            val processed = trailProcessor.processFrame(frame)
-                            latestFrame = processed
-                            onFrameUpdate(processed)
-
-                            holder.lockCanvas()?.let { canvas ->
-                                canvas.drawColor(Color.Black.hashCode())
-                                val canvasW = canvas.width.toFloat()
-                                val canvasH = canvas.height.toFloat()
-                                val bitmapW = processed.width.toFloat()
-                                val bitmapH = processed.height.toFloat()
-
-                                val isRotated = cameraController.sensorOrientation == 90 || cameraController.sensorOrientation == 270
-                                val rotW = if (isRotated) bitmapH else bitmapW
-                                val rotH = if (isRotated) bitmapW else bitmapH
-
-                                val matrix = android.graphics.Matrix()
-                                matrix.setTranslate(-bitmapW / 2f, -bitmapH / 2f)
-                                matrix.postRotate(cameraController.sensorOrientation.toFloat())
-                                val scale = maxOf(canvasW / rotW, canvasH / rotH)
-                                matrix.postScale(scale, scale)
-                                matrix.postTranslate(canvasW / 2f, canvasH / 2f)
-
-                                canvas.drawBitmap(processed, matrix, null)
-                                holder.unlockCanvasAndPost(canvas)
-                            }
+    Box(modifier = modifier.clip(RoundedCornerShape(12.dp))) {
+        AndroidView(
+            factory = { context ->
+                SurfaceView(context).apply {
+                    setZOrderMediaOverlay(true)
+                    holder.addCallback(object : SurfaceHolder.Callback {
+                        override fun surfaceCreated(holder: SurfaceHolder) {
+                            surfaceHolder = holder
                         }
-                        cameraController.openCamera()
-                    }
 
-                    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
+                        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
 
-                    override fun surfaceDestroyed(holder: SurfaceHolder) {
-                        cameraController.close()
-                    }
-                })
+                        override fun surfaceDestroyed(holder: SurfaceHolder) {
+                            surfaceHolder = null
+                        }
+                    })
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+
+    LaunchedEffect(Unit) {
+        cameraController.onFrameAvailable = { frame ->
+            if (!isoRangeReported) {
+                isoRangeReported = true
+                val range = cameraController.isoRange
+                onIsoRangeReady(range.lower, range.upper)
             }
-        },
-        modifier = modifier
-    )
+            val processed = trailProcessor.processFrame(frame, cameraController.sensorOrientation)
+
+            val holder = surfaceHolder
+            if (holder != null) {
+                val canvas: Canvas? = try { holder.lockCanvas() } catch (_: Exception) { null }
+                if (canvas != null) {
+                    try {
+                        canvas.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+
+                        val canvasW = canvas.width.toFloat()
+                        val canvasH = canvas.height.toFloat()
+                        val bitmapW = processed.width.toFloat()
+                        val bitmapH = processed.height.toFloat()
+
+                        val scaleX = canvasW / bitmapW
+                        val scaleY = canvasH / bitmapH
+                        val scale = minOf(scaleX, scaleY)
+                        val scaledW = bitmapW * scale
+                        val scaledH = bitmapH * scale
+                        val offsetX = (canvasW - scaledW) / 2f
+                        val offsetY = (canvasH - scaledH) / 2f
+
+                        val src = android.graphics.Rect(0, 0, processed.width, processed.height)
+                        val dst = android.graphics.RectF(offsetX, offsetY, offsetX + scaledW, offsetY + scaledH)
+                        canvas.drawBitmap(processed, src, dst, null)
+                    } finally {
+                        holder.unlockCanvasAndPost(canvas)
+                    }
+                }
+            }
+
+            onFrameUpdate(processed)
+        }
+        cameraController.openCamera()
+    }
 }
 
 @Composable
