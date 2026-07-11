@@ -31,3 +31,7 @@ Default: 30fps (hardcoded). Adjustable framerate is a stretch goal.
 
 ### Trail Fade (stretch goal)
 - Boolean toggle. When enabled, trail pixels fade from 100% alpha (most recent frame) to 0% alpha (least recent frame).
+
+## Persistence
+
+All user-facing settings (ISO, threshold, trail length, and any future controls) must be persisted across app launches using `SharedPreferences`. See `AGENTS.md` for the implementation pattern.

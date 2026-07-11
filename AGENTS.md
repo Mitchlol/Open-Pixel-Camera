@@ -23,6 +23,7 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 - No Kotlin plugin explicitly declared in `app/build.gradle.kts` (only `com.android.application`) — Kotlin compilation comes implicitly via AGP
 - **UI: Jetpack Compose** — no XML layouts. Camera preview and trail processing use Camera2 + OpenGL/Canvas underneath
 - **Camera: Camera2 API** (not CameraX) — manual exposure mode for `SENSOR_EXPOSURE_TIME` control
+- **Settings persistence:** All user-facing settings (sliders, toggles) must be persisted via `SharedPreferences` (`PREFS_NAME = "open_pixel_camera"`). Read defaults in `remember { mutableFloatStateOf(prefs.getFloat(...)) }`, write in the corresponding `LaunchedEffect`. Keys defined as `KEY_*` constants in `CameraScreen.kt`.
 
 ## Other docs
 

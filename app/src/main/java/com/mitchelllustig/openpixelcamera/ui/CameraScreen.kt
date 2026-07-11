@@ -1,6 +1,7 @@
 package com.mitchelllustig.openpixelcamera.ui
 
 import android.Manifest
+import android.content.Context
 import android.graphics.Bitmap
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -21,20 +22,38 @@ import com.mitchelllustig.openpixelcamera.processing.TrailProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
+private const val PREFS_NAME = "open_pixel_camera"
+private const val KEY_ISO_POSITION = "iso_position"
+private const val KEY_THRESHOLD = "threshold"
+private const val KEY_TRAIL_LENGTH = "trail_length"
+
 @Composable
 fun CameraScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val prefs = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
 
-    var iso by remember { mutableFloatStateOf(200f) }
-    var threshold by remember { mutableFloatStateOf(0.5f) }
-    var trailLength by remember { mutableIntStateOf(3) }
+    var isoPosition by remember { mutableFloatStateOf(prefs.getFloat(KEY_ISO_POSITION, 25f)) }
+    var threshold by remember { mutableFloatStateOf(prefs.getFloat(KEY_THRESHOLD, 50f)) }
+    var trailLength by remember { mutableIntStateOf(prefs.getInt(KEY_TRAIL_LENGTH, 3)) }
     var hasPermission by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var isoRange by remember { mutableStateOf(100f..1600f) }
+    var isoRange by remember { mutableStateOf(100f..6400f) }
 
     val cameraController = remember { CameraController(context) }
     val trailProcessor = remember { TrailProcessor() }
+
+    fun isoFromPosition(position: Float): Int {
+        val minIso = isoRange.start.toDouble()
+        val maxIso = isoRange.endInclusive.toDouble()
+        return (minIso * Math.pow(maxIso / minIso, position / 100.0)).toInt()
+    }
+
+    fun isoToPosition(isoValue: Int): Float {
+        val minIso = isoRange.start.toDouble()
+        val maxIso = isoRange.endInclusive.toDouble()
+        return (100.0 * Math.log(isoValue.toDouble() / minIso) / Math.log(maxIso / minIso)).toFloat()
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -56,16 +75,19 @@ fun CameraScreen() {
         permissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
-    LaunchedEffect(iso) {
-        cameraController.updateIso(iso.toInt())
+    LaunchedEffect(isoPosition) {
+        cameraController.updateIso(isoFromPosition(isoPosition))
+        prefs.edit().putFloat(KEY_ISO_POSITION, isoPosition).apply()
     }
 
     LaunchedEffect(threshold) {
-        trailProcessor.threshold = threshold
+        trailProcessor.threshold = threshold / 100f
+        prefs.edit().putFloat(KEY_THRESHOLD, threshold).apply()
     }
 
     LaunchedEffect(trailLength) {
         trailProcessor.trailLength = trailLength
+        prefs.edit().putInt(KEY_TRAIL_LENGTH, trailLength).apply()
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -76,18 +98,18 @@ fun CameraScreen() {
                 onFrameUpdate = { },
                 onIsoRangeReady = { lower, upper ->
                     isoRange = lower.toFloat()..upper.toFloat()
-                    if (iso < lower || iso > upper) {
-                        iso = iso.coerceIn(lower.toFloat(), upper.toFloat())
-                    }
+                    // Recompute position for current ISO within new range
+                    isoPosition = isoToPosition(isoFromPosition(isoPosition))
                 },
                 modifier = Modifier.fillMaxSize()
             )
         }
 
         Controls(
-            iso = iso,
-            onIsoChange = { iso = it },
-            isoRange = isoRange,
+            iso = isoPosition,
+            isoDisplay = isoFromPosition(isoPosition),
+            onIsoChange = { isoPosition = it },
+            isoRange = 0f..100f,
             threshold = threshold,
             onThresholdChange = { threshold = it },
             trailLength = trailLength,
@@ -133,7 +155,6 @@ private fun CameraPreview(
                                 onIsoRangeReady(range.lower, range.upper)
                             }
                             val processed = trailProcessor.processFrame(frame)
-                            latestFrame?.recycle()
                             latestFrame = processed
                             onFrameUpdate(processed)
 
@@ -175,6 +196,7 @@ private fun CameraPreview(
 @Composable
 private fun Controls(
     iso: Float,
+    isoDisplay: Int,
     onIsoChange: (Float) -> Unit,
     isoRange: ClosedFloatingPointRange<Float>,
     threshold: Float,
@@ -198,6 +220,7 @@ private fun Controls(
                 value = iso,
                 onValueChange = onIsoChange,
                 valueRange = isoRange,
+                displayValue = isoDisplay.toString(),
                 steps = 0
             )
 
@@ -205,8 +228,8 @@ private fun Controls(
                 label = "Threshold",
                 value = threshold,
                 onValueChange = onThresholdChange,
-                valueRange = 0f..1f,
-                steps = 19
+                valueRange = 0f..75f,
+                steps = 0
             )
 
             ControlSlider(
@@ -226,6 +249,7 @@ private fun ControlSlider(
     value: Float,
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,
+    displayValue: String? = null,
     steps: Int = 0
 ) {
     Column {
@@ -239,8 +263,9 @@ private fun ControlSlider(
                 style = MaterialTheme.typography.labelMedium
             )
             Text(
-                text = if (label == "Trail Length") value.toInt().toString()
-                       else String.format("%.1f", value),
+                text = displayValue
+                    ?: if (label == "Trail Length" || label == "ISO" || label == "Threshold") value.toInt().toString()
+                    else String.format("%.1f", value),
                 color = Color.White,
                 style = MaterialTheme.typography.labelMedium
             )
