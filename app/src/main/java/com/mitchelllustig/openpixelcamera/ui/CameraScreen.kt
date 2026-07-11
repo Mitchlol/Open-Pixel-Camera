@@ -8,15 +8,21 @@ import android.view.SurfaceView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import com.mitchelllustig.openpixelcamera.camera.CameraController
 import com.mitchelllustig.openpixelcamera.processing.TrailProcessor
 import kotlinx.coroutines.Dispatchers
@@ -90,34 +96,38 @@ fun CameraScreen() {
         prefs.edit().putInt(KEY_TRAIL_LENGTH, trailLength).apply()
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars)) {
         if (hasPermission) {
-            CameraPreview(
-                cameraController = cameraController,
-                trailProcessor = trailProcessor,
-                onFrameUpdate = { },
-                onIsoRangeReady = { lower, upper ->
-                    isoRange = lower.toFloat()..upper.toFloat()
-                    // Recompute position for current ISO within new range
-                    isoPosition = isoToPosition(isoFromPosition(isoPosition))
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
+            Column(modifier = Modifier.fillMaxSize()) {
+                CameraPreview(
+                    cameraController = cameraController,
+                    trailProcessor = trailProcessor,
+                    onFrameUpdate = { },
+                    onIsoRangeReady = { lower, upper ->
+                        isoRange = lower.toFloat()..upper.toFloat()
+                        isoPosition = isoToPosition(isoFromPosition(isoPosition))
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(2.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                )
 
-        Controls(
-            iso = isoPosition,
-            isoDisplay = isoFromPosition(isoPosition),
-            onIsoChange = { isoPosition = it },
-            isoRange = 0f..100f,
-            threshold = threshold,
-            onThresholdChange = { threshold = it },
-            trailLength = trailLength,
-            onTrailLengthChange = { trailLength = it },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(16.dp)
-        )
+                Controls(
+                    iso = isoPosition,
+                    isoDisplay = isoFromPosition(isoPosition),
+                    onIsoChange = { isoPosition = it },
+                    isoRange = 0f..100f,
+                    threshold = threshold,
+                    onThresholdChange = { threshold = it },
+                    trailLength = trailLength,
+                    onTrailLengthChange = { trailLength = it },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+        }
 
         error?.let { msg ->
             Text(
@@ -165,14 +175,16 @@ private fun CameraPreview(
                                 val bitmapW = processed.width.toFloat()
                                 val bitmapH = processed.height.toFloat()
 
+                                val isRotated = cameraController.sensorOrientation == 90 || cameraController.sensorOrientation == 270
+                                val rotW = if (isRotated) bitmapH else bitmapW
+                                val rotH = if (isRotated) bitmapW else bitmapH
+
                                 val matrix = android.graphics.Matrix()
-                                matrix.postRotate(cameraController.sensorOrientation.toFloat(), bitmapW / 2f, bitmapH / 2f)
-                                val scale = maxOf(canvasW / bitmapH, canvasH / bitmapW)
-                                matrix.postScale(scale, scale, bitmapW / 2f, bitmapH / 2f)
-                                matrix.postTranslate(
-                                    (canvasW - bitmapH * scale) / 2f,
-                                    (canvasH - bitmapW * scale) / 2f
-                                )
+                                matrix.setTranslate(-bitmapW / 2f, -bitmapH / 2f)
+                                matrix.postRotate(cameraController.sensorOrientation.toFloat())
+                                val scale = maxOf(canvasW / rotW, canvasH / rotH)
+                                matrix.postScale(scale, scale)
+                                matrix.postTranslate(canvasW / 2f, canvasH / 2f)
 
                                 canvas.drawBitmap(processed, matrix, null)
                                 holder.unlockCanvasAndPost(canvas)
