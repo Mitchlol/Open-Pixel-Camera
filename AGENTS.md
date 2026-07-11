@@ -7,6 +7,7 @@ Single-module Android app (Kotlin). Package: `com.mitchelllustig.openpixelcamera
 ## Build
 
 ```bash
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ./gradlew assembleDebug          # build debug APK
 ./gradlew test                   # local unit tests (JUnit 4)
 ./gradlew connectedAndroidTest   # instrumented tests (requires device/emulator)
