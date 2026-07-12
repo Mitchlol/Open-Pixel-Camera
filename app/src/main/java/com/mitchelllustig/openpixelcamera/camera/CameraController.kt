@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.util.Range
+import android.util.Size
 import android.view.Surface
 
 class CameraController(private val context: Context) {
@@ -27,18 +28,27 @@ class CameraController(private val context: Context) {
     @Volatile private var pendingFrame: FrameData? = null
     @Volatile private var processingIdle = true
     @Volatile private var opening = false
+    @Volatile private var openGeneration = 0
 
     private var cachedPixels: IntArray? = null
     private var cachedBitmap: Bitmap? = null
 
     var onFrameAvailable: ((Bitmap) -> Unit)? = null
     var onError: ((String) -> Unit)? = null
+    var onActualResolutionChanged: ((Int, Int) -> Unit)? = null
     var sensorOrientation: Int = 0
         private set
 
     private var targetFpsRange: Range<Int> = Range(30, 30)
     private var exposureRange: Range<Long> = Range(33_333_333L, 33_333_333L)
     var isoRange: Range<Int> = Range(100, 1600)
+        private set
+    private var currentIso: Int = 200
+
+    var availableFpsOptions: List<Int> = emptyList()
+        private set
+
+    var availableResolutions: List<Size> = emptyList()
         private set
 
     @SuppressLint("MissingPermission")
@@ -50,6 +60,7 @@ class CameraController(private val context: Context) {
     ) {
         if (opening) return
         opening = true
+        openGeneration++
 
         close()
 
@@ -93,10 +104,8 @@ class CameraController(private val context: Context) {
                 val h = image.height
                 image.close()
 
-                // Always overwrite with the newest frame
                 pendingFrame = FrameData(planes, w, h)
 
-                // If processing thread is idle, wake it up
                 if (processingIdle) {
                     processingIdle = false
                     processingHandler?.post { drainPendingFrame() }
@@ -104,10 +113,13 @@ class CameraController(private val context: Context) {
             }, backgroundHandler)
         }
 
+        val expectedGeneration = openGeneration
+
         cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
             override fun onOpened(camera: CameraDevice) {
-                if (backgroundHandler == null) { opening = false; return }
+                if (backgroundHandler == null || openGeneration != expectedGeneration) { opening = false; return }
                 cameraDevice = camera
+                onActualResolutionChanged?.invoke(width, height)
                 createPreviewSession(camera, iso, onReady)
             }
 
@@ -129,7 +141,6 @@ class CameraController(private val context: Context) {
     private fun drainPendingFrame() {
         val frame = pendingFrame ?: run {
             processingIdle = true
-            // Re-check in case a frame arrived between null check and setting idle
             if (pendingFrame != null && processingIdle) {
                 processingIdle = false
                 processingHandler?.post { drainPendingFrame() }
@@ -146,12 +157,10 @@ class CameraController(private val context: Context) {
         }
         bitmap?.let { onFrameAvailable?.invoke(it) }
 
-        // If another frame arrived during processing, process it immediately
         if (pendingFrame != null) {
             processingHandler?.post { drainPendingFrame() }
         } else {
             processingIdle = true
-            // Final re-check
             if (pendingFrame != null && processingIdle) {
                 processingIdle = false
                 processingHandler?.post { drainPendingFrame() }
@@ -164,7 +173,7 @@ class CameraController(private val context: Context) {
 
         val fpsRanges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
         Log.i(TAG, "=== Camera Capabilities ===")
-        Log.i(TAG, "Available FPS ranges: ${fpsRanges?.joinToString { "${it.lower}..${it.upper}" }}")
+        Log.i(TAG, "Supported FPS ranges: ${fpsRanges?.joinToString { "${it.lower}..${it.upper}" }}")
 
         val expRange = chars.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
         val minExpMs = expRange?.lower?.let { "%.1f".format(it / 1_000_000.0) } ?: "?"
@@ -183,38 +192,74 @@ class CameraController(private val context: Context) {
             Log.w(TAG, "ISO range not available, using default ${isoRange}")
         }
 
+        val streamConfigs = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        if (streamConfigs != null) {
+            availableResolutions = streamConfigs.getOutputSizes(ImageFormat.YUV_420_888)
+                ?.sortedBy { it.width * it.height }
+                ?.distinct()
+                ?: emptyList()
+            Log.i(TAG, "Available resolutions: ${availableResolutions.joinToString { "${it.width}x${it.height}" }}")
+        }
+
         Log.i(TAG, "=========================")
 
-        targetFpsRange = fpsRanges?.lastOrNull { it.lower == 30 && it.upper == 30 }
-            ?: fpsRanges?.lastOrNull { it.lower >= 30 }
+        val candidateFps = listOf(4, 7, 15, 20, 24, 30, 45, 48, 60)
+
+        val inAeRange = candidateFps.filter { fps ->
+            fpsRanges?.any { fps in it.lower..it.upper } == true
+        }
+        Log.i(TAG, "FPS in AE ranges: $inAeRange")
+
+        val minExposureNs = expRange?.lower ?: 0L
+        val maxExposureNs = expRange?.upper ?: Long.MAX_VALUE
+        availableFpsOptions = inAeRange.filter { fps ->
+            val requiredNs = 1_000_000_000L / fps
+            requiredNs in minExposureNs..maxExposureNs
+        }
+        Log.i(TAG, "FPS after exposure filter: $availableFpsOptions")
+
+        targetFpsRange = if (availableFpsOptions.contains(30)) Range(30, 30)
+            else availableFpsOptions.lastOrNull()?.let { Range(it, it) }
+            ?: fpsRanges?.lastOrNull { it.lower == 30 && it.upper == 30 }
             ?: fpsRanges?.lastOrNull()
             ?: Range(30, 30)
 
         Log.i(TAG, "Selected FPS range: $targetFpsRange")
 
-        val clamped = EXPOSURE_TIME_NANOS.coerceIn(expRange?.lower ?: 0, expRange?.upper ?: EXPOSURE_TIME_NANOS)
-        if (clamped != EXPOSURE_TIME_NANOS) {
-            Log.w(TAG, "Exposure $EXPOSURE_TIME_NANOS ns clamped to $clamped ns")
-        }
-        actualExposureNanos = clamped
+        val initialFps = if (availableFpsOptions.contains(30)) 30
+            else availableFpsOptions.lastOrNull() ?: 30
+        actualExposureNanos = (1_000_000_000L / initialFps).coerceIn(
+            expRange?.lower ?: 0L,
+            expRange?.upper ?: Long.MAX_VALUE
+        )
+        Log.i(TAG, "Selected FPS: $initialFps, exposure: ${actualExposureNanos / 1_000_000.0}ms")
     }
 
     fun updateIso(iso: Int) {
+        currentIso = iso
         val session = captureSession ?: return
         val camera = cameraDevice ?: return
         val surface = imageReader?.surface ?: return
 
-        val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-            addTarget(surface)
-            set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-            set(CaptureRequest.SENSOR_EXPOSURE_TIME, actualExposureNanos)
-            set(CaptureRequest.SENSOR_SENSITIVITY, iso)
-            set(CaptureRequest.SENSOR_FRAME_DURATION, actualExposureNanos)
-            set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, targetFpsRange)
-        }
+        try {
+            val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(surface)
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                set(CaptureRequest.SENSOR_EXPOSURE_TIME, actualExposureNanos)
+                set(CaptureRequest.SENSOR_SENSITIVITY, iso)
+                set(CaptureRequest.SENSOR_FRAME_DURATION, actualExposureNanos)
+                set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, targetFpsRange)
+            }
 
-        session.setRepeatingRequest(request.build(), null, backgroundHandler)
+            session.setRepeatingRequest(request.build(), null, backgroundHandler)
+        } catch (_: IllegalStateException) {}
+    }
+
+    fun updateFps(fps: Int) {
+        targetFpsRange = Range(fps, fps)
+        actualExposureNanos = (1_000_000_000L / fps).coerceIn(exposureRange.lower, exposureRange.upper)
+        updateIso(currentIso)
     }
 
     private fun createPreviewSession(
@@ -224,23 +269,27 @@ class CameraController(private val context: Context) {
     ) {
         val surface = imageReader?.surface ?: return
 
-        camera.createCaptureSession(
-            listOf(surface),
-            object : CameraCaptureSession.StateCallback() {
-                override fun onConfigured(session: CameraCaptureSession) {
-                    captureSession = session
-                    startPreview(session, iso)
-                    opening = false
-                    onReady(surface)
-                }
+        try {
+            camera.createCaptureSession(
+                listOf(surface),
+                object : CameraCaptureSession.StateCallback() {
+                    override fun onConfigured(session: CameraCaptureSession) {
+                        captureSession = session
+                        startPreview(session, iso)
+                        opening = false
+                        onReady(surface)
+                    }
 
-                override fun onConfigureFailed(session: CameraCaptureSession) {
-                    opening = false
-                    onError?.invoke("Camera session configuration failed")
-                }
-            },
-            backgroundHandler
-        )
+                    override fun onConfigureFailed(session: CameraCaptureSession) {
+                        opening = false
+                        onError?.invoke("Camera session configuration failed")
+                    }
+                },
+                backgroundHandler
+            )
+        } catch (_: IllegalStateException) {
+            opening = false
+        }
     }
 
     private fun startPreview(session: CameraCaptureSession, iso: Int) {
@@ -274,6 +323,8 @@ class CameraController(private val context: Context) {
         cameraDevice = null
         imageReader?.close()
         imageReader = null
+        pendingFrame = null
+        processingIdle = true
         processingThread?.quitSafely()
         try { processingThread?.join() } catch (_: InterruptedException) {}
         processingThread = null
@@ -348,7 +399,6 @@ class CameraController(private val context: Context) {
 
     companion object {
         private const val TAG = "CameraController"
-        const val EXPOSURE_TIME_NANOS = 33_333_333L
-        private var actualExposureNanos = EXPOSURE_TIME_NANOS
+        private var actualExposureNanos = 33_333_333L
     }
 }

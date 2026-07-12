@@ -41,6 +41,8 @@ private const val PREFS_NAME = "open_pixel_camera"
 private const val KEY_ISO_POSITION = "iso_position"
 private const val KEY_THRESHOLD = "threshold"
 private const val KEY_TRAIL_LENGTH = "trail_length"
+private const val KEY_FPS = "fps"
+private const val KEY_RESOLUTION_INDEX = "resolution_index"
 
 @Composable
 fun CameraScreen() {
@@ -53,8 +55,20 @@ fun CameraScreen() {
     var hasPermission by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var isoRange by remember { mutableStateOf(100f..6400f) }
+    var fpsOptions by remember { mutableStateOf<List<Int>>(emptyList()) }
+    var fpsSelectedIndex by remember { mutableIntStateOf(0) }
+    var resolutionOptions by remember { mutableStateOf<List<Pair<Int, Int>>>(emptyList()) }
+    var resolutionSelectedIndex by remember { mutableIntStateOf(0) }
+    var currentResolution by remember { mutableStateOf(Pair(640, 360)) }
+    var isoRangeReported by remember { mutableStateOf(false) }
+    var resolutionInitialized by remember { mutableStateOf(false) }
+    var cameraRestartNonce by remember { mutableIntStateOf(0) }
 
-    val cameraController = remember { CameraController(context) }
+    val cameraController = remember {
+        CameraController(context).apply {
+            onActualResolutionChanged = { w, h -> currentResolution = Pair(w, h) }
+        }
+    }
     val trailProcessor = remember { TrailProcessor() }
     val videoRecorder = remember { VideoRecorder(context) }
     var isRecording by remember { mutableStateOf(false) }
@@ -143,27 +157,85 @@ fun CameraScreen() {
         prefs.edit().putInt(KEY_TRAIL_LENGTH, trailLength).apply()
     }
 
+    LaunchedEffect(fpsSelectedIndex) {
+        if (fpsOptions.isEmpty()) return@LaunchedEffect
+        val fps = fpsOptions[fpsSelectedIndex]
+        cameraController.updateFps(fps)
+        prefs.edit().putInt(KEY_FPS, fps).apply()
+    }
+
+    LaunchedEffect(resolutionSelectedIndex) {
+        if (resolutionOptions.isEmpty()) return@LaunchedEffect
+        val (w, h) = resolutionOptions[resolutionSelectedIndex]
+        prefs.edit().putInt(KEY_RESOLUTION_INDEX, resolutionSelectedIndex).apply()
+        if (resolutionInitialized) {
+            currentResolution = Pair(w, h)
+            cameraController.close()
+            isoRangeReported = false
+            cameraRestartNonce++
+        } else {
+            currentResolution = Pair(w, h)
+            resolutionInitialized = true
+            if (w != 640 || h != 360) {
+                cameraController.close()
+                isoRangeReported = false
+                cameraRestartNonce++
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars)) {
         if (hasPermission) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                CameraPreview(
-                    cameraController = cameraController,
-                    trailProcessor = trailProcessor,
-                    cameraActive = cameraActive,
-                    videoRecorder = videoRecorder,
-                    onFrameUpdate = { },
-                    onIsoRangeReady = { lower, upper ->
+            val isRotated = cameraController.sensorOrientation == 90 || cameraController.sensorOrientation == 270
+            val previewW = if (isRotated) currentResolution.second else currentResolution.first
+            val previewH = if (isRotated) currentResolution.first else currentResolution.second
+
+            CameraPreview(
+                cameraController = cameraController,
+                trailProcessor = trailProcessor,
+                cameraActive = cameraActive,
+                videoRecorder = videoRecorder,
+                captureWidth = currentResolution.first,
+                captureHeight = currentResolution.second,
+                isoRangeReported = isoRangeReported,
+                onIsoRangeReported = { isoRangeReported = true },
+                cameraRestartNonce = cameraRestartNonce,
+                onFrameUpdate = { },
+                onIsoRangeReady = { lower, upper ->
                         isoRange = lower.toFloat()..upper.toFloat()
                         isoPosition = isoToPosition(isoFromPosition(isoPosition))
                         cameraController.updateIso(isoFromPosition(isoPosition))
-                    },
-                    initialIso = isoFromPosition(isoPosition),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                )
 
+                        val available = cameraController.availableFpsOptions
+                        if (available.isNotEmpty()) {
+                            fpsOptions = available
+                            val savedFps = prefs.getInt(KEY_FPS, available.last())
+                            val savedIndex = available.indexOf(savedFps).coerceAtLeast(0)
+                            fpsSelectedIndex = savedIndex
+                            cameraController.updateFps(available[savedIndex])
+                        }
+
+                        val resolutions = cameraController.availableResolutions
+                            .map { Pair(it.width, it.height) }
+                        if (resolutions.isNotEmpty()) {
+                            resolutionOptions = resolutions
+                            val savedResIndex = prefs.getInt(KEY_RESOLUTION_INDEX, 0)
+                                    .coerceIn(0, resolutions.size - 1)
+                            resolutionSelectedIndex = savedResIndex
+                            currentResolution = resolutions[savedResIndex]
+                        }
+                    },
+                initialIso = isoFromPosition(isoPosition),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .aspectRatio(previewW.toFloat() / previewH.toFloat())
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+            ) {
                 Controls(
                     iso = isoPosition,
                     isoDisplay = isoFromPosition(isoPosition),
@@ -173,6 +245,13 @@ fun CameraScreen() {
                     onThresholdChange = { threshold = it },
                     trailLength = trailLength,
                     onTrailLengthChange = { trailLength = it },
+                    fpsOptions = fpsOptions,
+                    fpsSelectedIndex = fpsSelectedIndex,
+                    onFpsIndexChange = { fpsSelectedIndex = it },
+                    resolutionOptions = resolutionOptions,
+                    resolutionSelectedIndex = resolutionSelectedIndex,
+                    onResolutionIndexChange = { resolutionSelectedIndex = it },
+                    enabled = !isRecording,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
 
@@ -204,9 +283,10 @@ fun CameraScreen() {
                                 isRecording = false
                             } else {
                                 val isRotated = cameraController.sensorOrientation == 90 || cameraController.sensorOrientation == 270
-                                val w = if (isRotated) 360 else 640
-                                val h = if (isRotated) 640 else 360
-                                if (videoRecorder.start(w, h)) {
+                                val w = if (isRotated) currentResolution.second else currentResolution.first
+                                val h = if (isRotated) currentResolution.first else currentResolution.second
+                                val currentFps = if (fpsOptions.isNotEmpty()) fpsOptions[fpsSelectedIndex] else 60
+                                if (videoRecorder.start(w, h, currentFps)) {
                                     isRecording = true
                                 }
                             }
@@ -288,19 +368,31 @@ private fun CameraPreview(
     trailProcessor: TrailProcessor,
     cameraActive: Boolean,
     videoRecorder: VideoRecorder,
+    captureWidth: Int,
+    captureHeight: Int,
+    isoRangeReported: Boolean,
+    onIsoRangeReported: () -> Unit,
+    cameraRestartNonce: Int,
     onFrameUpdate: (Bitmap) -> Unit,
     onIsoRangeReady: (lower: Int, upper: Int) -> Unit,
     initialIso: Int = 200,
     modifier: Modifier = Modifier
 ) {
-    var isoRangeReported by remember { mutableStateOf(false) }
     var surfaceHolder by remember { mutableStateOf<SurfaceHolder?>(null) }
+    var lastBufW by remember { mutableIntStateOf(0) }
+    var lastBufH by remember { mutableIntStateOf(0) }
 
-    Box(modifier = modifier.clip(RoundedCornerShape(12.dp))) {
+    Box(modifier = modifier) {
         AndroidView(
             factory = { context ->
                 SurfaceView(context).apply {
                     setZOrderMediaOverlay(true)
+                    val isRotated = cameraController.sensorOrientation == 90 || cameraController.sensorOrientation == 270
+                    val bufW = if (isRotated) captureHeight else captureWidth
+                    val bufH = if (isRotated) captureWidth else captureHeight
+                    lastBufW = bufW
+                    lastBufH = bufH
+                    holder.setFixedSize(bufW, bufH)
                     holder.addCallback(object : SurfaceHolder.Callback {
                         override fun surfaceCreated(holder: SurfaceHolder) {
                             surfaceHolder = holder
@@ -314,15 +406,25 @@ private fun CameraPreview(
                     })
                 }
             },
+            update = { view ->
+                val isRotated = cameraController.sensorOrientation == 90 || cameraController.sensorOrientation == 270
+                val bufW = if (isRotated) captureHeight else captureWidth
+                val bufH = if (isRotated) captureWidth else captureHeight
+                if (bufW != lastBufW || bufH != lastBufH) {
+                    lastBufW = bufW
+                    lastBufH = bufH
+                    view.holder.setFixedSize(bufW, bufH)
+                }
+            },
             modifier = Modifier.fillMaxSize()
         )
     }
 
-    LaunchedEffect(cameraActive, surfaceHolder) {
+    LaunchedEffect(cameraActive, surfaceHolder, cameraRestartNonce) {
         if (!cameraActive || surfaceHolder == null) return@LaunchedEffect
         cameraController.onFrameAvailable = { frame ->
             if (!isoRangeReported) {
-                isoRangeReported = true
+                onIsoRangeReported()
                 val range = cameraController.isoRange
                 onIsoRangeReady(range.lower, range.upper)
             }
@@ -334,23 +436,7 @@ private fun CameraPreview(
                 if (canvas != null) {
                     try {
                         canvas.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-
-                        val canvasW = canvas.width.toFloat()
-                        val canvasH = canvas.height.toFloat()
-                        val bitmapW = processed.width.toFloat()
-                        val bitmapH = processed.height.toFloat()
-
-                        val scaleX = canvasW / bitmapW
-                        val scaleY = canvasH / bitmapH
-                        val scale = minOf(scaleX, scaleY)
-                        val scaledW = bitmapW * scale
-                        val scaledH = bitmapH * scale
-                        val offsetX = (canvasW - scaledW) / 2f
-                        val offsetY = (canvasH - scaledH) / 2f
-
-                        val src = android.graphics.Rect(0, 0, processed.width, processed.height)
-                        val dst = android.graphics.RectF(offsetX, offsetY, offsetX + scaledW, offsetY + scaledH)
-                        canvas.drawBitmap(processed, src, dst, null)
+                        canvas.drawBitmap(processed, 0f, 0f, null)
                     } finally {
                         holder.unlockCanvasAndPost(canvas)
                     }
@@ -363,7 +449,7 @@ private fun CameraPreview(
                 videoRecorder.drawFrame(processed)
             }
         }
-        cameraController.openCamera(iso = initialIso)
+        cameraController.openCamera(width = captureWidth, height = captureHeight, iso = initialIso)
     }
 }
 
@@ -377,6 +463,13 @@ private fun Controls(
     onThresholdChange: (Float) -> Unit,
     trailLength: Int,
     onTrailLengthChange: (Int) -> Unit,
+    fpsOptions: List<Int>,
+    fpsSelectedIndex: Int,
+    onFpsIndexChange: (Int) -> Unit,
+    resolutionOptions: List<Pair<Int, Int>>,
+    resolutionSelectedIndex: Int,
+    onResolutionIndexChange: (Int) -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -394,7 +487,7 @@ private fun Controls(
                 value = iso,
                 onValueChange = onIsoChange,
                 valueRange = isoRange,
-                displayValue = isoDisplay.toString(),
+                displayValue = null,
                 steps = 0
             )
 
@@ -413,6 +506,37 @@ private fun Controls(
                 valueRange = 1f..20f,
                 steps = 18
             )
+
+            if (fpsOptions.size >= 2) {
+                var dragIndex by remember { mutableFloatStateOf(fpsSelectedIndex.toFloat()) }
+                LaunchedEffect(fpsSelectedIndex) { dragIndex = fpsSelectedIndex.toFloat() }
+                ControlSlider(
+                    label = "Frame Rate (FPS)",
+                    value = dragIndex,
+                    onValueChange = { dragIndex = Math.round(it).toFloat().coerceIn(0f, (fpsOptions.size - 1).toFloat()) },
+                    valueRange = 0f..(fpsOptions.size - 1).toFloat(),
+                    steps = fpsOptions.size - 2,
+                    displayValue = "${fpsOptions[dragIndex.toInt()]}",
+                    enabled = enabled,
+                    onValueChangeFinished = { onFpsIndexChange(dragIndex.toInt()) }
+                )
+            }
+
+            if (resolutionOptions.size >= 2) {
+                var dragIndex by remember { mutableFloatStateOf(resolutionSelectedIndex.toFloat()) }
+                LaunchedEffect(resolutionSelectedIndex) { dragIndex = resolutionSelectedIndex.toFloat() }
+                val (w, h) = resolutionOptions[dragIndex.toInt().coerceIn(0, resolutionOptions.size - 1)]
+                ControlSlider(
+                    label = "Resolution",
+                    value = dragIndex,
+                    onValueChange = { dragIndex = Math.round(it).toFloat().coerceIn(0f, (resolutionOptions.size - 1).toFloat()) },
+                    valueRange = 0f..(resolutionOptions.size - 1).toFloat(),
+                    steps = resolutionOptions.size - 2,
+                    displayValue = "${w}×${h}",
+                    enabled = enabled,
+                    onValueChangeFinished = { onResolutionIndexChange(dragIndex.toInt()) }
+                )
+            }
         }
     }
 }
@@ -424,19 +548,35 @@ private fun ControlSlider(
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,
     displayValue: String? = null,
-    steps: Int = 0
+    steps: Int = 0,
+    enabled: Boolean = true,
+    onValueChangeFinished: (() -> Unit)? = null
 ) {
     Column {
-        Text(
-            text = label,
-            color = Color.White,
-            style = MaterialTheme.typography.labelMedium
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = label,
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium
+            )
+            if (displayValue != null) {
+                Text(
+                    text = displayValue,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+        }
         Slider(
             value = value,
             onValueChange = onValueChange,
+            onValueChangeFinished = onValueChangeFinished,
             valueRange = valueRange,
             steps = steps,
+            enabled = enabled,
             colors = SliderDefaults.colors(
                 thumbColor = Color.White,
                 activeTrackColor = Color.White

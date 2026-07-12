@@ -24,7 +24,7 @@ class VideoRecorder(private val context: Context) {
     var isRecording = false
         private set
 
-    fun start(width: Int, height: Int): Boolean {
+    fun start(width: Int, height: Int, fps: Int = 60): Boolean {
         if (isRecording) return false
         try {
             val contentValues = ContentValues().apply {
@@ -50,7 +50,7 @@ class VideoRecorder(private val context: Context) {
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setVideoEncoder(MediaRecorder.VideoEncoder.H264)
                 setVideoSize(width, height)
-                setVideoFrameRate(30)
+                setVideoFrameRate(fps)
                 setVideoEncodingBitRate(width * height * 4)
                 setOutputFile(pfd!!.fileDescriptor)
                 prepare()
