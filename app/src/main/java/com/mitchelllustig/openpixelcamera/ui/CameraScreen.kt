@@ -79,6 +79,7 @@ import com.mitchelllustig.openpixelcamera.camera.CameraController
 import com.mitchelllustig.openpixelcamera.processing.TrailProcessor
 import com.mitchelllustig.openpixelcamera.recording.VideoRecorder
 import android.graphics.Canvas as AwtCanvas
+import kotlin.math.pow
 
 private const val PREFS_NAME = "open_pixel_camera"
 private const val KEY_ISO_POSITION = "iso_position"
@@ -151,7 +152,7 @@ fun CameraScreen() {
     fun isoFromPosition(position: Float): Int {
         val minIso = isoRange.start.toDouble()
         val maxIso = isoRange.endInclusive.toDouble()
-        return (minIso * Math.pow(maxIso / minIso, position / 100.0)).toInt()
+        return (minIso * (maxIso / minIso).pow(position.toDouble() / 100.0)).toInt()
     }
 
     fun isoToPosition(isoValue: Int): Float {
@@ -323,8 +324,16 @@ fun CameraScreen() {
                             .map { Pair(it.width, it.height) }
                         if (resolutions.isNotEmpty()) {
                             resolutionOptions = resolutions
-                            val savedResIndex = prefs.getInt(KEY_RESOLUTION_INDEX, 0)
-                                    .coerceIn(0, resolutions.size - 1)
+                            val savedResIndex = if (prefs.contains(KEY_RESOLUTION_INDEX)) {
+                                prefs.getInt(KEY_RESOLUTION_INDEX, 0).coerceIn(0, resolutions.size - 1)
+                            } else {
+                                resolutions.indices.minByOrNull { i ->
+                                    val (w, h) = resolutions[i]
+                                    val dw = w - 640
+                                    val dh = h - 480
+                                    dw * dw + dh * dh
+                                } ?: 0
+                            }
                             resolutionSelectedIndex = savedResIndex
                             currentResolution = resolutions[savedResIndex]
                         }
