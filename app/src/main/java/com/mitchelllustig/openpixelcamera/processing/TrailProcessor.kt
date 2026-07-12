@@ -26,6 +26,9 @@ class TrailProcessor {
     var trailLength: Int = 3
         set(value) { field = value.coerceAtLeast(1) }
 
+    var fadePercent: Float = 0.25f
+        set(value) { field = value.coerceIn(0f, 1f) }
+
     fun processFrame(frame: Bitmap, orientation: Int = 0): Bitmap {
         val width = frame.width
         val height = frame.height
@@ -61,13 +64,29 @@ class TrailProcessor {
 
         val thresholdValue = 255 - (threshold * 255).toInt()
 
+        val fadeFrames = (trailLength * fadePercent).toInt().coerceAtMost(trailLength - 1)
+        val fadeStart = trailLength - fadeFrames
+
         for (i in 0 until size) {
             val age = tAge[i].toInt()
             if (age > 0) {
-                tAge[i] = (age + 1).toByte()
-                if (age + 1 > trailLength) {
+                val newAge = age + 1
+                if (newAge > trailLength) {
                     tAge[i] = 0
                     tPix[i] = Color.TRANSPARENT
+                } else {
+                    tAge[i] = newAge.toByte()
+                    if (newAge > fadeStart) {
+                        val pixel = tPix[i]
+                        val r = Color.red(pixel)
+                        val g = Color.green(pixel)
+                        val b = Color.blue(pixel)
+                        val alpha = Color.alpha(pixel)
+                        val remaining = trailLength - age + 1
+                        val remainingNew = remaining - 1
+                        val na = (alpha * remainingNew + remaining / 2) / remaining
+                        tPix[i] = Color.argb(na, r, g, b)
+                    }
                 }
             }
         }
