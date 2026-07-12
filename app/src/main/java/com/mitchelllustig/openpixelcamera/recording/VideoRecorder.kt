@@ -24,7 +24,7 @@ class VideoRecorder(private val context: Context) {
     var isRecording = false
         private set
 
-    fun start(width: Int, height: Int, fps: Int = 60): Boolean {
+    fun start(width: Int, height: Int, fps: Int = 60, audioEnabled: Boolean = false): Boolean {
         if (isRecording) return false
         try {
             val contentValues = ContentValues().apply {
@@ -47,7 +47,15 @@ class VideoRecorder(private val context: Context) {
 
             val r = MediaRecorder().apply {
                 setVideoSource(MediaRecorder.VideoSource.SURFACE)
+                if (audioEnabled) {
+                    setAudioSource(MediaRecorder.AudioSource.CAMCORDER)
+                }
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                if (audioEnabled) {
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                    setAudioEncodingBitRate(128000)
+                    setAudioSamplingRate(44100)
+                }
                 setVideoEncoder(MediaRecorder.VideoEncoder.H264)
                 setVideoSize(width, height)
                 setVideoFrameRate(fps)

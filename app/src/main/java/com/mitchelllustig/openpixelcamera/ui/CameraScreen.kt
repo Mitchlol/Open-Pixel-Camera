@@ -46,6 +46,8 @@ private const val KEY_THRESHOLD = "threshold"
 private const val KEY_TRAIL_LENGTH = "trail_length"
 private const val KEY_FPS = "fps"
 private const val KEY_RESOLUTION_INDEX = "resolution_index"
+private const val KEY_AUDIO_ENABLED = "audio_enabled"
+private const val KEY_FADE_PERCENT = "fade_percent"
 
 @Composable
 fun CameraScreen() {
@@ -66,6 +68,8 @@ fun CameraScreen() {
     var isoRangeReported by remember { mutableStateOf(false) }
     var resolutionInitialized by remember { mutableStateOf(false) }
     var cameraRestartNonce by remember { mutableIntStateOf(0) }
+    var audioEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_AUDIO_ENABLED, false)) }
+    var fadePercent by remember { mutableFloatStateOf(prefs.getFloat(KEY_FADE_PERCENT, 25f)) }
 
     val cameraController = remember {
         CameraController(context).apply {
@@ -140,6 +144,34 @@ fun CameraScreen() {
         }
     }
 
+    var pendingAudioRecording by remember { mutableStateOf(false) }
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            pendingAudioRecording = true
+        } else {
+            audioEnabled = false
+        }
+    }
+
+    fun startRecording() {
+        val isRotated = cameraController.sensorOrientation == 90 || cameraController.sensorOrientation == 270
+        val w = if (isRotated) currentResolution.second else currentResolution.first
+        val h = if (isRotated) currentResolution.first else currentResolution.second
+        val currentFps = if (fpsOptions.isNotEmpty()) fpsOptions[fpsSelectedIndex] else 30
+        if (videoRecorder.start(w, h, currentFps, audioEnabled)) {
+            isRecording = true
+        }
+    }
+
+    LaunchedEffect(pendingAudioRecording) {
+        if (pendingAudioRecording) {
+            pendingAudioRecording = false
+            startRecording()
+        }
+    }
+
     LaunchedEffect(Unit) {
         permissionLauncher.launch(Manifest.permission.CAMERA)
     }
@@ -158,6 +190,15 @@ fun CameraScreen() {
     LaunchedEffect(trailLength) {
         trailProcessor.trailLength = trailLength
         prefs.edit().putInt(KEY_TRAIL_LENGTH, trailLength).apply()
+    }
+
+    LaunchedEffect(audioEnabled) {
+        prefs.edit().putBoolean(KEY_AUDIO_ENABLED, audioEnabled).apply()
+    }
+
+    LaunchedEffect(fadePercent) {
+        trailProcessor.fadePercent = fadePercent / 100f
+        prefs.edit().putFloat(KEY_FADE_PERCENT, fadePercent).apply()
     }
 
     LaunchedEffect(fpsSelectedIndex) {
@@ -248,19 +289,11 @@ fun CameraScreen() {
             ) {
                 if (showCameraPanel) {
                     SettingsPanel(
-                        title = "Camera",
+                        title = "Light Trail Settings",
                         enabled = !isRecording,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         onClose = { showCameraPanel = false }
                     ) {
-                        ControlSlider(
-                            label = "Camera Brightness (ISO)",
-                            value = isoPosition,
-                            onValueChange = { isoPosition = it },
-                            valueRange = 0f..100f,
-                            displayValue = null,
-                            steps = 0
-                        )
                         ControlSlider(
                             label = "Trail Sensitivity",
                             value = threshold,
@@ -275,16 +308,36 @@ fun CameraScreen() {
                             valueRange = 1f..20f,
                             steps = 18
                         )
+                        ControlSlider(
+                            label = "Fade",
+                            value = fadePercent,
+                            onValueChange = { fadePercent = it },
+                            valueRange = 0f..100f,
+                            steps = 0
+                        )
                     }
                 }
 
                 if (showOutputPanel) {
                     SettingsPanel(
-                        title = "Output",
+                        title = "Camera Settings",
                         enabled = !isRecording,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         onClose = { showOutputPanel = false }
                     ) {
+                        Text(
+                            text = "Higher frame rates and resolutions may cause dropped frames on some devices. If the preview stutters or trails look choppy, try lowering these settings.",
+                            color = Color.White.copy(alpha = 0.45f),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        ControlSlider(
+                            label = "Camera Brightness (ISO)",
+                            value = isoPosition,
+                            onValueChange = { isoPosition = it },
+                            valueRange = 0f..100f,
+                            displayValue = null,
+                            steps = 0
+                        )
                         if (fpsOptions.size >= 2) {
                             var dragIndex by remember { mutableFloatStateOf(fpsSelectedIndex.toFloat()) }
                             LaunchedEffect(fpsSelectedIndex) { dragIndex = fpsSelectedIndex.toFloat() }
@@ -312,6 +365,32 @@ fun CameraScreen() {
                                 displayValue = "${w}×${h}",
                                 enabled = !isRecording,
                                 onValueChangeFinished = { resolutionSelectedIndex = dragIndex.toInt() }
+                            )
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) { audioEnabled = !audioEnabled },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = audioEnabled,
+                                onCheckedChange = { audioEnabled = it },
+                                enabled = !isRecording,
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = Color.White,
+                                    uncheckedColor = Color.White.copy(alpha = 0.6f),
+                                    checkmarkColor = Color.Black
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Record Audio",
+                                color = Color.White.copy(alpha = if (isRecording) 0.5f else 0.9f),
+                                style = MaterialTheme.typography.bodyMedium
                             )
                         }
                     }
@@ -342,12 +421,10 @@ fun CameraScreen() {
                                 videoRecorder.stop()
                                 isRecording = false
                             } else {
-                                val isRotated = cameraController.sensorOrientation == 90 || cameraController.sensorOrientation == 270
-                                val w = if (isRotated) currentResolution.second else currentResolution.first
-                                val h = if (isRotated) currentResolution.first else currentResolution.second
-                                val currentFps = if (fpsOptions.isNotEmpty()) fpsOptions[fpsSelectedIndex] else 30
-                                if (videoRecorder.start(w, h, currentFps)) {
-                                    isRecording = true
+                                if (audioEnabled) {
+                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                } else {
+                                    startRecording()
                                 }
                             }
                         }
