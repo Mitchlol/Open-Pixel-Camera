@@ -289,6 +289,7 @@ fun CameraScreen() {
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.systemBars)
+            .background(Color.Black)
     ) {
         if (hasPermission) {
             val isRotated = cameraController.sensorOrientation == 90 || cameraController.sensorOrientation == 270
@@ -557,16 +558,15 @@ fun CameraScreen() {
                     }
                 }
             }
-
-            error?.let { msg ->
-                Text(
-                    text = msg,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(16.dp)
-                )
-            }
+        }
+        error?.let { msg ->
+            Text(
+                text = msg,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(16.dp)
+            )
         }
     }
 }
