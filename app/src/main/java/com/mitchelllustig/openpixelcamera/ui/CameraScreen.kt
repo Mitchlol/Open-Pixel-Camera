@@ -176,22 +176,25 @@ fun CameraScreen() {
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
 
-                Box(
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 16.dp),
-                    contentAlignment = Alignment.Center
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (isRecording) {
-                        val mins = recordingSeconds / 60
-                        val secs = recordingSeconds % 60
-                        Text(
-                            text = String.format("%02d:%02d", mins, secs),
-                            color = Color.Red,
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.align(Alignment.CenterStart)
-                                .padding(start = 32.dp)
-                        )
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isRecording) {
+                            val mins = recordingSeconds / 60
+                            val secs = recordingSeconds % 60
+                            Text(
+                                text = String.format("%02d:%02d", mins, secs),
+                                color = Color.Red,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
                     }
                     RecordButton(
                         isRecording = isRecording,
@@ -209,6 +212,7 @@ fun CameraScreen() {
                             }
                         }
                     )
+                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -386,7 +390,7 @@ private fun Controls(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             ControlSlider(
-                label = "ISO",
+                label = "Camera Brightness (ISO)",
                 value = iso,
                 onValueChange = onIsoChange,
                 valueRange = isoRange,
@@ -395,7 +399,7 @@ private fun Controls(
             )
 
             ControlSlider(
-                label = "Threshold",
+                label = "Trail Sensitivity",
                 value = threshold,
                 onValueChange = onThresholdChange,
                 valueRange = 0f..75f,
@@ -403,7 +407,7 @@ private fun Controls(
             )
 
             ControlSlider(
-                label = "Trail Length",
+                label = "Trail Length (Frames)",
                 value = trailLength.toFloat(),
                 onValueChange = { onTrailLengthChange(it.toInt()) },
                 valueRange = 1f..20f,
@@ -423,23 +427,11 @@ private fun ControlSlider(
     steps: Int = 0
 ) {
     Column {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = label,
-                color = Color.White,
-                style = MaterialTheme.typography.labelMedium
-            )
-            Text(
-                text = displayValue
-                    ?: if (label == "Trail Length" || label == "ISO" || label == "Threshold") value.toInt().toString()
-                    else String.format("%.1f", value),
-                color = Color.White,
-                style = MaterialTheme.typography.labelMedium
-            )
-        }
+        Text(
+            text = label,
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium
+        )
         Slider(
             value = value,
             onValueChange = onValueChange,
