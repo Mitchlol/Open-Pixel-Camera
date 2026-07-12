@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.Canvas as AwtCanvas
 import android.graphics.PorterDuff
 import android.net.Uri
 import android.view.SurfaceHolder
@@ -16,12 +15,43 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,20 +59,26 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.compose.ui.res.painterResource
 import com.mitchelllustig.openpixelcamera.R
 import com.mitchelllustig.openpixelcamera.camera.CameraController
 import com.mitchelllustig.openpixelcamera.processing.TrailProcessor
 import com.mitchelllustig.openpixelcamera.recording.VideoRecorder
+import android.graphics.Canvas as AwtCanvas
 
 private const val PREFS_NAME = "open_pixel_camera"
 private const val KEY_ISO_POSITION = "iso_position"
@@ -52,6 +88,7 @@ private const val KEY_FPS = "fps"
 private const val KEY_RESOLUTION_INDEX = "resolution_index"
 private const val KEY_AUDIO_ENABLED = "audio_enabled"
 private const val KEY_FADE_PERCENT = "fade_percent"
+private const val KEY_HIDE_BANNER = "hide_banner"
 
 @Composable
 fun CameraScreen() {
@@ -59,8 +96,8 @@ fun CameraScreen() {
     val prefs = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
 
     var isoPosition by remember { mutableFloatStateOf(prefs.getFloat(KEY_ISO_POSITION, 25f)) }
-    var threshold by remember { mutableFloatStateOf(prefs.getFloat(KEY_THRESHOLD, 50f)) }
-    var trailLength by remember { mutableIntStateOf(prefs.getInt(KEY_TRAIL_LENGTH, 3)) }
+    var threshold by remember { mutableFloatStateOf(prefs.getFloat(KEY_THRESHOLD, 25f)) }
+    var trailLength by remember { mutableIntStateOf(prefs.getInt(KEY_TRAIL_LENGTH, 8)) }
     var hasPermission by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var isoRange by remember { mutableStateOf(100f..6400f) }
@@ -72,8 +109,9 @@ fun CameraScreen() {
     var isoRangeReported by remember { mutableStateOf(false) }
     var resolutionInitialized by remember { mutableStateOf(false) }
     var cameraRestartNonce by remember { mutableIntStateOf(0) }
-    var audioEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_AUDIO_ENABLED, false)) }
+    var audioEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_AUDIO_ENABLED, true)) }
     var fadePercent by remember { mutableFloatStateOf(prefs.getFloat(KEY_FADE_PERCENT, 25f)) }
+    var hideBanner by remember { mutableStateOf(prefs.getBoolean(KEY_HIDE_BANNER, false)) }
 
     val cameraController = remember {
         CameraController(context).apply {
@@ -84,6 +122,21 @@ fun CameraScreen() {
     val videoRecorder = remember { VideoRecorder(context) }
     var isRecording by remember { mutableStateOf(false) }
     var recordingSeconds by remember { mutableIntStateOf(0) }
+
+    val annotatedText = remember() {
+        buildAnnotatedString {
+            append("Sponsored by ")
+            withStyle(
+                style = SpanStyle(
+                    color = Color.Blue,
+                    textDecoration = TextDecoration.Underline,
+                    fontWeight = FontWeight.Bold
+                )
+            ) {
+                append("OpenPixelPoi")
+            }
+        }
+    }
 
     LaunchedEffect(isRecording) {
         if (isRecording) {
@@ -200,6 +253,10 @@ fun CameraScreen() {
         prefs.edit().putBoolean(KEY_AUDIO_ENABLED, audioEnabled).apply()
     }
 
+    LaunchedEffect(hideBanner) {
+        prefs.edit().putBoolean(KEY_HIDE_BANNER, hideBanner).apply()
+    }
+
     LaunchedEffect(fadePercent) {
         trailProcessor.fadePercent = fadePercent / 100f
         prefs.edit().putFloat(KEY_FADE_PERCENT, fadePercent).apply()
@@ -291,6 +348,52 @@ fun CameraScreen() {
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
             ) {
+                if(!hideBanner){
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White)
+                            .padding(16.dp, 8.dp)
+                            .clickable {
+                                context.startActivity(
+                                    Intent(
+                                        Intent.ACTION_VIEW,
+                                        Uri.parse("https://www.openpixelpoi.com")
+                                    )
+                                )
+                            },
+                        verticalAlignment = Alignment.CenterVertically,
+
+                        ) {
+                        // Icon on the left
+                        Image(
+                            painter = painterResource(id = R.drawable.opp_logo),
+                            contentDescription = null, // Set to null if it's purely decorative
+                            modifier = Modifier.size(40.dp).pointerInput(Unit) {
+                                detectTapGestures(
+                                    onLongPress = {
+                                        hideBanner = true
+                                    }
+                                )
+                            }
+                        )
+
+                        // Space between icon and text
+                        Spacer(modifier = Modifier.width(16.dp))
+
+                        // Text on the right
+                        Text(
+                            text = annotatedText,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+
+
                 if (showCameraPanel) {
                     SettingsPanel(
                         title = "Light Trail Settings",
