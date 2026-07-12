@@ -3,7 +3,7 @@ package com.mitchelllustig.openpixelcamera.ui
 import android.Manifest
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
+import android.graphics.Canvas as AwtCanvas
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.RectF
@@ -11,22 +11,31 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.mitchelllustig.openpixelcamera.camera.CameraController
 import com.mitchelllustig.openpixelcamera.processing.TrailProcessor
+import com.mitchelllustig.openpixelcamera.recording.VideoRecorder
 
 private const val PREFS_NAME = "open_pixel_camera"
 private const val KEY_ISO_POSITION = "iso_position"
@@ -36,7 +45,6 @@ private const val KEY_TRAIL_LENGTH = "trail_length"
 @Composable
 fun CameraScreen() {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val prefs = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
 
     var isoPosition by remember { mutableFloatStateOf(prefs.getFloat(KEY_ISO_POSITION, 25f)) }
@@ -48,6 +56,19 @@ fun CameraScreen() {
 
     val cameraController = remember { CameraController(context) }
     val trailProcessor = remember { TrailProcessor() }
+    val videoRecorder = remember { VideoRecorder(context) }
+    var isRecording by remember { mutableStateOf(false) }
+    var recordingSeconds by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(isRecording) {
+        if (isRecording) {
+            recordingSeconds = 0
+            while (true) {
+                kotlinx.coroutines.delay(1000L)
+                recordingSeconds++
+            }
+        }
+    }
 
     fun isoFromPosition(position: Float): Int {
         val minIso = isoRange.start.toDouble()
@@ -74,6 +95,10 @@ fun CameraScreen() {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> {
+                    if (videoRecorder.isRecording) {
+                        videoRecorder.stop()
+                        isRecording = false
+                    }
                     cameraActive = false
                     cameraController.close()
                 }
@@ -125,6 +150,7 @@ fun CameraScreen() {
                     cameraController = cameraController,
                     trailProcessor = trailProcessor,
                     cameraActive = cameraActive,
+                    videoRecorder = videoRecorder,
                     onFrameUpdate = { },
                     onIsoRangeReady = { lower, upper ->
                         isoRange = lower.toFloat()..upper.toFloat()
@@ -149,6 +175,41 @@ fun CameraScreen() {
                     onTrailLengthChange = { trailLength = it },
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isRecording) {
+                        val mins = recordingSeconds / 60
+                        val secs = recordingSeconds % 60
+                        Text(
+                            text = String.format("%02d:%02d", mins, secs),
+                            color = Color.Red,
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.align(Alignment.CenterStart)
+                                .padding(start = 32.dp)
+                        )
+                    }
+                    RecordButton(
+                        isRecording = isRecording,
+                        onClick = {
+                            if (isRecording) {
+                                videoRecorder.stop()
+                                isRecording = false
+                            } else {
+                                val isRotated = cameraController.sensorOrientation == 90 || cameraController.sensorOrientation == 270
+                                val w = if (isRotated) 360 else 640
+                                val h = if (isRotated) 640 else 360
+                                if (videoRecorder.start(w, h)) {
+                                    isRecording = true
+                                }
+                            }
+                        }
+                    )
+                }
             }
         }
 
@@ -165,10 +226,64 @@ fun CameraScreen() {
 }
 
 @Composable
+private fun RecordButton(
+    isRecording: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val buttonSize = 64.dp
+    val ringStroke = 3.dp
+    val ringRadius = 28.dp
+    val innerRadius = 22.dp
+    val stopSquareSize = 22.dp
+
+    Box(
+        modifier = modifier
+            .size(buttonSize)
+            .clip(CircleShape)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            val center = Offset(cx, cy)
+
+            if (!isRecording) {
+                drawCircle(
+                    color = Color.Red,
+                    radius = innerRadius.toPx(),
+                    center = center
+                )
+            } else {
+                val half = stopSquareSize.toPx() / 2f
+                drawRoundRect(
+                    color = Color.Red,
+                    topLeft = Offset(cx - half, cy - half),
+                    size = Size(stopSquareSize.toPx(), stopSquareSize.toPx()),
+                    cornerRadius = CornerRadius(4.dp.toPx())
+                )
+            }
+
+            drawCircle(
+                color = Color.White,
+                radius = ringRadius.toPx(),
+                center = center,
+                style = Stroke(width = ringStroke.toPx())
+            )
+        }
+    }
+}
+
+@Composable
 private fun CameraPreview(
     cameraController: CameraController,
     trailProcessor: TrailProcessor,
     cameraActive: Boolean,
+    videoRecorder: VideoRecorder,
     onFrameUpdate: (Bitmap) -> Unit,
     onIsoRangeReady: (lower: Int, upper: Int) -> Unit,
     initialIso: Int = 200,
@@ -211,7 +326,7 @@ private fun CameraPreview(
 
             val holder = surfaceHolder
             if (holder != null) {
-                val canvas: Canvas? = try { holder.lockCanvas() } catch (_: Exception) { null }
+                val canvas: AwtCanvas? = try { holder.lockCanvas() } catch (_: Exception) { null }
                 if (canvas != null) {
                     try {
                         canvas.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
@@ -239,6 +354,10 @@ private fun CameraPreview(
             }
 
             onFrameUpdate(processed)
+
+            if (videoRecorder.isRecording) {
+                videoRecorder.drawFrame(processed)
+            }
         }
         cameraController.openCamera(iso = initialIso)
     }
