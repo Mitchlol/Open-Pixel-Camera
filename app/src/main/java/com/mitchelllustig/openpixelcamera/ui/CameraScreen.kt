@@ -287,8 +287,8 @@ private fun Controls(
                 label = "Trail Length",
                 value = trailLength.toFloat(),
                 onValueChange = { onTrailLengthChange(it.toInt()) },
-                valueRange = 1f..10f,
-                steps = 8
+                valueRange = 1f..20f,
+                steps = 18
             )
         }
     }

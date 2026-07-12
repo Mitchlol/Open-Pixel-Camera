@@ -96,9 +96,8 @@ class TrailProcessor {
             val r = Color.red(pixel)
             val g = Color.green(pixel)
             val b = Color.blue(pixel)
-            val brightness = (r * 0.299 + g * 0.587 + b * 0.114).toInt()
 
-            if (brightness > thresholdValue) {
+            if (r > thresholdValue || g > thresholdValue || b > thresholdValue) {
                 tPix[i] = pixel or 0xFF000000.toInt()
                 tAge[i] = 1
             }
