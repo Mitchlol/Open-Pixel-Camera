@@ -193,21 +193,15 @@ fun CameraScreen() {
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        hasPermission = granted
-        if (!granted) {
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        hasPermission = permissions[Manifest.permission.CAMERA] ?: false
+        if (!hasPermission) {
             error = "Camera permission required"
         }
-    }
-
-    var pendingAudioRecording by remember { mutableStateOf(false) }
-    val audioPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            pendingAudioRecording = true
-        } else {
+        
+        val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] ?: false
+        if (!audioGranted) {
             audioEnabled = false
         }
     }
@@ -222,15 +216,13 @@ fun CameraScreen() {
         }
     }
 
-    LaunchedEffect(pendingAudioRecording) {
-        if (pendingAudioRecording) {
-            pendingAudioRecording = false
-            startRecording()
-        }
-    }
-
     LaunchedEffect(Unit) {
-        permissionLauncher.launch(Manifest.permission.CAMERA)
+        permissionLauncher.launch(
+            arrayOf(
+                Manifest.permission.CAMERA,
+                Manifest.permission.RECORD_AUDIO
+            )
+        )
     }
 
     LaunchedEffect(isoPosition, cameraActive) {
@@ -532,11 +524,7 @@ fun CameraScreen() {
                                 videoRecorder.stop()
                                 isRecording = false
                             } else {
-                                if (audioEnabled) {
-                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                } else {
-                                    startRecording()
-                                }
+                                startRecording()
                             }
                         }
                     )
