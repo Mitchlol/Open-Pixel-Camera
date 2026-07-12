@@ -26,6 +26,7 @@ class CameraController(private val context: Context) {
     private var frameCount = 0
     @Volatile private var pendingFrame: FrameData? = null
     @Volatile private var processingIdle = true
+    @Volatile private var opening = false
 
     private var cachedPixels: IntArray? = null
     private var cachedBitmap: Bitmap? = null
@@ -47,6 +48,11 @@ class CameraController(private val context: Context) {
         iso: Int = 200,
         onReady: (Surface) -> Unit = {}
     ) {
+        if (opening) return
+        opening = true
+
+        close()
+
         backgroundThread = HandlerThread("CameraBackground").apply { start() }
         backgroundHandler = Handler(backgroundThread!!.looper)
 
@@ -100,16 +106,19 @@ class CameraController(private val context: Context) {
 
         cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
             override fun onOpened(camera: CameraDevice) {
+                if (backgroundHandler == null) { opening = false; return }
                 cameraDevice = camera
                 createPreviewSession(camera, iso, onReady)
             }
 
             override fun onDisconnected(camera: CameraDevice) {
+                opening = false
                 camera.close()
                 cameraDevice = null
             }
 
             override fun onError(camera: CameraDevice, error: Int) {
+                opening = false
                 camera.close()
                 cameraDevice = null
                 onError?.invoke("Camera error: $error")
@@ -221,10 +230,12 @@ class CameraController(private val context: Context) {
                 override fun onConfigured(session: CameraCaptureSession) {
                     captureSession = session
                     startPreview(session, iso)
+                    opening = false
                     onReady(surface)
                 }
 
                 override fun onConfigureFailed(session: CameraCaptureSession) {
+                    opening = false
                     onError?.invoke("Camera session configuration failed")
                 }
             },
@@ -238,20 +249,25 @@ class CameraController(private val context: Context) {
 
         Log.i(TAG, "Starting preview: exposure=${actualExposureNanos}ns (${actualExposureNanos / 1_000_000.0}ms), fps=$targetFpsRange, iso=$iso")
 
-        val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-            addTarget(surface)
-            set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-            set(CaptureRequest.SENSOR_EXPOSURE_TIME, actualExposureNanos)
-            set(CaptureRequest.SENSOR_SENSITIVITY, iso)
-            set(CaptureRequest.SENSOR_FRAME_DURATION, actualExposureNanos)
-            set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, targetFpsRange)
-        }
+        try {
+            val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(surface)
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                set(CaptureRequest.SENSOR_EXPOSURE_TIME, actualExposureNanos)
+                set(CaptureRequest.SENSOR_SENSITIVITY, iso)
+                set(CaptureRequest.SENSOR_FRAME_DURATION, actualExposureNanos)
+                set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, targetFpsRange)
+            }
 
-        session.setRepeatingRequest(request.build(), null, backgroundHandler)
+            session.setRepeatingRequest(request.build(), null, backgroundHandler)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start preview: ${e.message}")
+        }
     }
 
     fun close() {
+        opening = false
         captureSession?.close()
         captureSession = null
         cameraDevice?.close()

@@ -20,8 +20,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.mitchelllustig.openpixelcamera.camera.CameraController
 import com.mitchelllustig.openpixelcamera.processing.TrailProcessor
 
@@ -65,6 +68,27 @@ fun CameraScreen() {
         }
     }
 
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var cameraActive by remember { mutableStateOf(true) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> {
+                    cameraActive = false
+                    cameraController.close()
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    cameraActive = true
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -78,7 +102,8 @@ fun CameraScreen() {
         permissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
-    LaunchedEffect(isoPosition) {
+    LaunchedEffect(isoPosition, cameraActive) {
+        if (!cameraActive) return@LaunchedEffect
         cameraController.updateIso(isoFromPosition(isoPosition))
         prefs.edit().putFloat(KEY_ISO_POSITION, isoPosition).apply()
     }
@@ -99,12 +124,14 @@ fun CameraScreen() {
                 CameraPreview(
                     cameraController = cameraController,
                     trailProcessor = trailProcessor,
+                    cameraActive = cameraActive,
                     onFrameUpdate = { },
                     onIsoRangeReady = { lower, upper ->
                         isoRange = lower.toFloat()..upper.toFloat()
                         isoPosition = isoToPosition(isoFromPosition(isoPosition))
                         cameraController.updateIso(isoFromPosition(isoPosition))
                     },
+                    initialIso = isoFromPosition(isoPosition),
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
@@ -141,8 +168,10 @@ fun CameraScreen() {
 private fun CameraPreview(
     cameraController: CameraController,
     trailProcessor: TrailProcessor,
+    cameraActive: Boolean,
     onFrameUpdate: (Bitmap) -> Unit,
     onIsoRangeReady: (lower: Int, upper: Int) -> Unit,
+    initialIso: Int = 200,
     modifier: Modifier = Modifier
 ) {
     var isoRangeReported by remember { mutableStateOf(false) }
@@ -170,7 +199,8 @@ private fun CameraPreview(
         )
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(cameraActive, surfaceHolder) {
+        if (!cameraActive || surfaceHolder == null) return@LaunchedEffect
         cameraController.onFrameAvailable = { frame ->
             if (!isoRangeReported) {
                 isoRangeReported = true
@@ -210,7 +240,7 @@ private fun CameraPreview(
 
             onFrameUpdate(processed)
         }
-        cameraController.openCamera()
+        cameraController.openCamera(iso = initialIso)
     }
 }
 
