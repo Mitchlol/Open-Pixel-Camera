@@ -2,14 +2,17 @@ package com.mitchelllustig.openpixelcamera.ui
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas as AwtCanvas
 import android.graphics.PorterDuff
+import android.net.Uri
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,6 +31,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -396,22 +400,26 @@ fun CameraScreen() {
                     }
                 }
 
-                Box(
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 16.dp, start = 16.dp, end = 16.dp)
                         .height(64.dp),
-                    contentAlignment = Alignment.Center
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (isRecording) {
-                        val mins = recordingSeconds / 60
-                        val secs = recordingSeconds % 60
-                        Text(
-                            text = String.format("%02d:%02d", mins, secs),
-                            color = Color.Red,
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.align(Alignment.CenterStart)
-                        )
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isRecording) {
+                            val mins = recordingSeconds / 60
+                            val secs = recordingSeconds % 60
+                            Text(
+                                text = String.format("%02d:%02d", mins, secs),
+                                color = Color.Red,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
                     }
 
                     RecordButton(
@@ -430,34 +438,35 @@ fun CameraScreen() {
                         }
                     )
 
-                    Row(
-                        modifier = Modifier.align(Alignment.CenterEnd),
-                        verticalAlignment = Alignment.CenterVertically
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.Center
                     ) {
-                        PanelToggleButton(
-                            isActive = showCameraPanel,
-                            onClick = { showCameraPanel = !showCameraPanel },
-                            iconType = PanelIconType.CAMERA
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        PanelToggleButton(
-                            isActive = showOutputPanel,
-                            onClick = { showOutputPanel = !showOutputPanel },
-                            iconType = PanelIconType.OUTPUT
-                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            PanelToggleButton(
+                                isActive = showCameraPanel,
+                                onClick = { showCameraPanel = !showCameraPanel; if (showCameraPanel) showOutputPanel = false },
+                                iconType = PanelIconType.CAMERA
+                            )
+                            PanelToggleButton(
+                                isActive = showOutputPanel,
+                                onClick = { showOutputPanel = !showOutputPanel; if (showOutputPanel) showCameraPanel = false },
+                                iconType = PanelIconType.OUTPUT
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        error?.let { msg ->
-            Text(
-                text = msg,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(16.dp)
-            )
+            error?.let { msg ->
+                Text(
+                    text = msg,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(16.dp)
+                )
+            }
         }
     }
 }
