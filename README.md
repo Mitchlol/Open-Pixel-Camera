@@ -1,6 +1,6 @@
 <h1>
 Open Pixel Camera
-<img src="./app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="30" height="30" />
+<img src="./app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.webp" width="30" height="30" />
 </h1>
 
 <h4>
