@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ImageFormat
 import android.hardware.camera2.*
+import android.media.Image
 import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
@@ -12,6 +13,10 @@ import android.util.Log
 import android.util.Range
 import android.util.Size
 import android.view.Surface
+import io.github.crow_misia.libyuv.RowStride
+import io.github.crow_misia.libyuv.Yuv
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class CameraController(private val context: Context) {
 
@@ -30,7 +35,10 @@ class CameraController(private val context: Context) {
     @Volatile private var opening = false
     @Volatile private var openGeneration = 0
 
-    private var cachedPixels: IntArray? = null
+    private var cachedYBuf: ByteBuffer? = null
+    private var cachedUBuf: ByteBuffer? = null
+    private var cachedVBuf: ByteBuffer? = null
+    private var cachedArgbBuf: ByteBuffer? = null
     private var cachedBitmap: Bitmap? = null
 
     var onFrameAvailable: ((Bitmap) -> Unit)? = null
@@ -95,16 +103,64 @@ class CameraController(private val context: Context) {
                     Log.w(TAG, "FRAME GAP: ${"%.1f".format(deltaMs)}ms since last frame")
                 }
 
-                val planes = image.planes.map { plane ->
-                    val buf = ByteArray(plane.buffer.remaining())
-                    plane.buffer.get(buf)
-                    BufferData(buf, plane.rowStride, plane.pixelStride)
-                }
                 val w = image.width
                 val h = image.height
+
+                val planes = image.planes
+                val yPlane = planes[0]
+                val uPlane = planes[1]
+                val vPlane = planes[2]
+
+                val yRowStride = yPlane.rowStride
+                val uvRowStride = uPlane.rowStride
+                val uvPixelStride = uPlane.pixelStride
+                val vBufPosition0 = vPlane.buffer.position() == 0
+
+                val ySize = yPlane.buffer.remaining()
+                val uSize = uPlane.buffer.remaining()
+                val vSize = vPlane.buffer.remaining()
+
+                var yBuf = cachedYBuf
+                if (yBuf == null || yBuf.capacity() < ySize) {
+                    yBuf = ByteBuffer.allocateDirect(ySize).order(ByteOrder.nativeOrder())
+                    cachedYBuf = yBuf
+                }
+                yBuf.clear()
+                val yTmp = ByteArray(ySize)
+                yPlane.buffer.get(yTmp)
+                yBuf.put(yTmp)
+                yBuf.flip()
+
+                var uBuf = cachedUBuf
+                if (uBuf == null || uBuf.capacity() < uSize) {
+                    uBuf = ByteBuffer.allocateDirect(uSize).order(ByteOrder.nativeOrder())
+                    cachedUBuf = uBuf
+                }
+                uBuf.clear()
+                val uTmp = ByteArray(uSize)
+                uPlane.buffer.get(uTmp)
+                uBuf.put(uTmp)
+                uBuf.flip()
+
+                var vBuf = cachedVBuf
+                if (vBuf == null || vBuf.capacity() < vSize) {
+                    vBuf = ByteBuffer.allocateDirect(vSize).order(ByteOrder.nativeOrder())
+                    cachedVBuf = vBuf
+                }
+                vBuf.clear()
+                val vTmp = ByteArray(vSize)
+                vPlane.buffer.get(vTmp)
+                vBuf.put(vTmp)
+                vBuf.flip()
+
                 image.close()
 
-                pendingFrame = FrameData(planes, w, h)
+                pendingFrame = FrameData(
+                    yBuf, uBuf, vBuf,
+                    yRowStride, uvRowStride, uvPixelStride,
+                    vBufPosition0,
+                    w, h
+                )
 
                 if (processingIdle) {
                     processingIdle = false
@@ -150,7 +206,7 @@ class CameraController(private val context: Context) {
         pendingFrame = null
 
         val processStart = System.nanoTime()
-        val bitmap = yuv420ToBitmap(frame.planes, frame.width, frame.height)
+        val bitmap = yuv420ToBitmap(frame)
         val processMs = (System.nanoTime() - processStart) / 1_000_000.0
         if (processMs > 35.0) {
             Log.w(TAG, "SLOW PROCESS: ${"%.1f".format(processMs)}ms")
@@ -347,53 +403,61 @@ class CameraController(private val context: Context) {
         }
     }
 
-    private data class BufferData(
-        val data: ByteArray,
-        val rowStride: Int,
-        val pixelStride: Int
-    )
-
     private data class FrameData(
-        val planes: List<BufferData>,
+        val yBuf: ByteBuffer,
+        val uBuf: ByteBuffer,
+        val vBuf: ByteBuffer,
+        val yRowStride: Int,
+        val uvRowStride: Int,
+        val uvPixelStride: Int,
+        val isNv21: Boolean,
         val width: Int,
         val height: Int
     )
 
-    private fun yuv420ToBitmap(planes: List<BufferData>, width: Int, height: Int): Bitmap? {
-        val yData = planes[0].data
-        val uData = planes[1].data
-        val vData = planes[2].data
-        val yRowStride = planes[0].rowStride
-        val uvRowStride = planes[1].rowStride
-        val uvPixelStride = planes[1].pixelStride
+    private fun yuv420ToBitmap(frame: FrameData): Bitmap? {
+        val width = frame.width
+        val height = frame.height
 
-        val size = width * height
-        var pixels = cachedPixels
-        if (pixels == null || pixels.size != size) {
-            pixels = IntArray(size)
-            cachedPixels = pixels
-            cachedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val argbSize = width * height * 4
+        var argbBuf = cachedArgbBuf
+        if (argbBuf == null || argbBuf.capacity() < argbSize) {
+            argbBuf = ByteBuffer.allocateDirect(argbSize).order(ByteOrder.nativeOrder())
+            cachedArgbBuf = argbBuf
+        }
+        argbBuf.clear()
+
+        if (frame.uvPixelStride == 1) {
+            Yuv.convertI420ToARGB(
+                frame.yBuf, RowStride(frame.yRowStride), 0,
+                frame.uBuf, RowStride(frame.uvRowStride), 0,
+                frame.vBuf, RowStride(frame.uvRowStride), 0,
+                argbBuf, RowStride(width * 4), 0,
+                width, height
+            )
+        } else if (frame.isNv21) {
+            Yuv.convertNV21ToARGB(
+                frame.yBuf, RowStride(frame.yRowStride), 0,
+                frame.uBuf, RowStride(frame.uvRowStride), 0,
+                argbBuf, RowStride(width * 4), 0,
+                width, height
+            )
+        } else {
+            Yuv.convertNV12ToARGB(
+                frame.yBuf, RowStride(frame.yRowStride), 0,
+                frame.vBuf, RowStride(frame.uvRowStride), 0,
+                argbBuf, RowStride(width * 4), 0,
+                width, height
+            )
         }
 
-        for (row in 0 until height) {
-            for (col in 0 until width) {
-                val y = (yData[row * yRowStride + col].toInt() and 0xFF) - 16
-
-                val uvIndex = (row / 2) * uvRowStride + (col / 2) * uvPixelStride
-                val u = (uData[uvIndex].toInt() and 0xFF) - 128
-                val v = (vData[uvIndex].toInt() and 0xFF) - 128
-
-                val c = 298 * y
-                val r = ((c + 409 * v) / 256).coerceIn(0, 255)
-                val g = ((c - 100 * v - 208 * u) / 256).coerceIn(0, 255)
-                val b = ((c + 516 * u) / 256).coerceIn(0, 255)
-
-                pixels[row * width + col] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-            }
+        var bitmap = cachedBitmap
+        if (bitmap == null || bitmap.width != width || bitmap.height != height) {
+            bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            cachedBitmap = bitmap
         }
-
-        val bitmap = cachedBitmap!!
-        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+        argbBuf.position(0)
+        bitmap.copyPixelsFromBuffer(argbBuf)
         return bitmap
     }
 
