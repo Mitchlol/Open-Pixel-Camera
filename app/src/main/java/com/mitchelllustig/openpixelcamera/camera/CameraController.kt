@@ -31,17 +31,15 @@ class CameraController(private val context: Context) {
     private var processingHandler: Handler? = null
     private var lastFrameTimeNanos = 0L
     private var frameCount = 0
-    @Volatile private var pendingFrame: FrameData? = null
+    @Volatile private var pendingResult: PendingResult? = null
     @Volatile private var processingIdle = true
     @Volatile private var opening = false
     @Volatile private var openGeneration = 0
 
-    private var cachedYBuf: ByteBuffer? = null
-    private var cachedUBuf: ByteBuffer? = null
-    private var cachedVBuf: ByteBuffer? = null
     private var cachedArgbBuf: ByteBuffer? = null
     private var cachedRotatedArgbBuf: ByteBuffer? = null
     private var cachedBitmap: Bitmap? = null
+    private var cachedRotateMode = RotateMode.ROTATE_0
 
     var onFrameAvailable: ((Bitmap) -> Unit)? = null
     var onError: ((String) -> Unit)? = null
@@ -86,6 +84,13 @@ class CameraController(private val context: Context) {
             return
         }
 
+        cachedRotateMode = when (sensorOrientation) {
+            90 -> RotateMode.ROTATE_90
+            180 -> RotateMode.ROTATE_180
+            270 -> RotateMode.ROTATE_270
+            else -> RotateMode.ROTATE_0
+        }
+
         queryCameraCapabilities(cameraId)
 
         imageReader = ImageReader.newInstance(
@@ -108,65 +113,83 @@ class CameraController(private val context: Context) {
                 val w = image.width
                 val h = image.height
 
-                val planes = image.planes
-                val yPlane = planes[0]
-                val uPlane = planes[1]
-                val vPlane = planes[2]
+                val yPlane = image.planes[0]
+                val uPlane = image.planes[1]
+                val vPlane = image.planes[2]
+
+                val argbSize = w * h * 4
+                var argbBuf = cachedArgbBuf
+                if (argbBuf == null || argbBuf.capacity() < argbSize) {
+                    argbBuf = ByteBuffer.allocateDirect(argbSize).order(ByteOrder.nativeOrder())
+                    cachedArgbBuf = argbBuf
+                }
+                argbBuf.clear()
 
                 val yRowStride = yPlane.rowStride
                 val uvRowStride = uPlane.rowStride
                 val uvPixelStride = uPlane.pixelStride
-                val vBufPosition0 = vPlane.buffer.position() == 0
+                val isNv21 = vPlane.buffer.position() == 0
 
-                val ySize = yPlane.buffer.remaining()
-                val uSize = uPlane.buffer.remaining()
-                val vSize = vPlane.buffer.remaining()
-
-                var yBuf = cachedYBuf
-                if (yBuf == null || yBuf.capacity() < ySize) {
-                    yBuf = ByteBuffer.allocateDirect(ySize).order(ByteOrder.nativeOrder())
-                    cachedYBuf = yBuf
+                if (uvPixelStride == 1) {
+                    Yuv.convertI420ToARGB(
+                        yPlane.buffer, RowStride(yRowStride), yPlane.buffer.position(),
+                        uPlane.buffer, RowStride(uvRowStride), uPlane.buffer.position(),
+                        vPlane.buffer, RowStride(uvRowStride), vPlane.buffer.position(),
+                        argbBuf, RowStride(w * 4), 0,
+                        w, h
+                    )
+                } else if (isNv21) {
+                    Yuv.convertNV21ToARGB(
+                        yPlane.buffer, RowStride(yRowStride), yPlane.buffer.position(),
+                        uPlane.buffer, RowStride(uvRowStride), uPlane.buffer.position(),
+                        argbBuf, RowStride(w * 4), 0,
+                        w, h
+                    )
+                } else {
+                    Yuv.convertNV12ToARGB(
+                        yPlane.buffer, RowStride(yRowStride), yPlane.buffer.position(),
+                        vPlane.buffer, RowStride(uvRowStride), vPlane.buffer.position(),
+                        argbBuf, RowStride(w * 4), 0,
+                        w, h
+                    )
                 }
-                yBuf.clear()
-                val yTmp = ByteArray(ySize)
-                yPlane.buffer.get(yTmp)
-                yBuf.put(yTmp)
-                yBuf.flip()
-
-                var uBuf = cachedUBuf
-                if (uBuf == null || uBuf.capacity() < uSize) {
-                    uBuf = ByteBuffer.allocateDirect(uSize).order(ByteOrder.nativeOrder())
-                    cachedUBuf = uBuf
-                }
-                uBuf.clear()
-                val uTmp = ByteArray(uSize)
-                uPlane.buffer.get(uTmp)
-                uBuf.put(uTmp)
-                uBuf.flip()
-
-                var vBuf = cachedVBuf
-                if (vBuf == null || vBuf.capacity() < vSize) {
-                    vBuf = ByteBuffer.allocateDirect(vSize).order(ByteOrder.nativeOrder())
-                    cachedVBuf = vBuf
-                }
-                vBuf.clear()
-                val vTmp = ByteArray(vSize)
-                vPlane.buffer.get(vTmp)
-                vBuf.put(vTmp)
-                vBuf.flip()
 
                 image.close()
 
-                pendingFrame = FrameData(
-                    yBuf, uBuf, vBuf,
-                    yRowStride, uvRowStride, uvPixelStride,
-                    vBufPosition0,
-                    w, h
-                )
+                val outW: Int
+                val outH: Int
+                val srcBuf: ByteBuffer
+
+                if (cachedRotateMode == RotateMode.ROTATE_0) {
+                    outW = w
+                    outH = h
+                    srcBuf = argbBuf
+                } else {
+                    outW = h
+                    outH = w
+                    val rotatedSize = outW * outH * 4
+                    var rotatedBuf = cachedRotatedArgbBuf
+                    if (rotatedBuf == null || rotatedBuf.capacity() < rotatedSize) {
+                        rotatedBuf = ByteBuffer.allocateDirect(rotatedSize).order(ByteOrder.nativeOrder())
+                        cachedRotatedArgbBuf = rotatedBuf
+                    }
+                    rotatedBuf.clear()
+                    Yuv.rotateARGBRotate(
+                        argbBuf, RowStride(w * 4), 0,
+                        rotatedBuf, RowStride(outW * 4), 0,
+                        w, h,
+                        cachedRotateMode.degrees
+                    )
+                    srcBuf = rotatedBuf
+                }
+
+                srcBuf.position(0)
+                srcBuf.limit(outW * outH * 4)
+                pendingResult = PendingResult(srcBuf, outW, outH)
 
                 if (processingIdle) {
                     processingIdle = false
-                    processingHandler?.post { drainPendingFrame() }
+                    processingHandler?.post { drainPendingResult() }
                 }
             }, backgroundHandler)
         }
@@ -196,32 +219,38 @@ class CameraController(private val context: Context) {
         }, backgroundHandler)
     }
 
-    private fun drainPendingFrame() {
-        val frame = pendingFrame ?: run {
+    private fun drainPendingResult() {
+        val result = pendingResult ?: run {
             processingIdle = true
-            if (pendingFrame != null && processingIdle) {
+            if (pendingResult != null && processingIdle) {
                 processingIdle = false
-                processingHandler?.post { drainPendingFrame() }
+                processingHandler?.post { drainPendingResult() }
             }
             return
         }
-        pendingFrame = null
+        pendingResult = null
 
         val processStart = System.nanoTime()
-        val bitmap = yuv420ToBitmap(frame, sensorOrientation)
+        var bitmap = cachedBitmap
+        if (bitmap == null || bitmap.width != result.outWidth || bitmap.height != result.outHeight) {
+            bitmap = Bitmap.createBitmap(result.outWidth, result.outHeight, Bitmap.Config.ARGB_8888)
+            cachedBitmap = bitmap
+        }
+        result.srcBuf.position(0)
+        bitmap.copyPixelsFromBuffer(result.srcBuf)
         val processMs = (System.nanoTime() - processStart) / 1_000_000.0
         if (processMs > 35.0) {
             Log.w(TAG, "SLOW PROCESS: ${"%.1f".format(processMs)}ms")
         }
-        bitmap?.let { onFrameAvailable?.invoke(it) }
+        bitmap.let { onFrameAvailable?.invoke(it) }
 
-        if (pendingFrame != null) {
-            processingHandler?.post { drainPendingFrame() }
+        if (pendingResult != null) {
+            processingHandler?.post { drainPendingResult() }
         } else {
             processingIdle = true
-            if (pendingFrame != null && processingIdle) {
+            if (pendingResult != null && processingIdle) {
                 processingIdle = false
-                processingHandler?.post { drainPendingFrame() }
+                processingHandler?.post { drainPendingResult() }
             }
         }
     }
@@ -381,7 +410,7 @@ class CameraController(private val context: Context) {
         cameraDevice = null
         imageReader?.close()
         imageReader = null
-        pendingFrame = null
+        pendingResult = null
         processingIdle = true
         processingThread?.quitSafely()
         try { processingThread?.join() } catch (_: InterruptedException) {}
@@ -405,100 +434,11 @@ class CameraController(private val context: Context) {
         }
     }
 
-    private data class FrameData(
-        val yBuf: ByteBuffer,
-        val uBuf: ByteBuffer,
-        val vBuf: ByteBuffer,
-        val yRowStride: Int,
-        val uvRowStride: Int,
-        val uvPixelStride: Int,
-        val isNv21: Boolean,
-        val width: Int,
-        val height: Int
-    )
-
-    private fun yuv420ToBitmap(frame: FrameData, orientation: Int): Bitmap? {
-        val width = frame.width
-        val height = frame.height
-
-        val argbSize = width * height * 4
-        var argbBuf = cachedArgbBuf
-        if (argbBuf == null || argbBuf.capacity() < argbSize) {
-            argbBuf = ByteBuffer.allocateDirect(argbSize).order(ByteOrder.nativeOrder())
-            cachedArgbBuf = argbBuf
-        }
-        argbBuf.clear()
-
-        if (frame.uvPixelStride == 1) {
-            Yuv.convertI420ToARGB(
-                frame.yBuf, RowStride(frame.yRowStride), 0,
-                frame.uBuf, RowStride(frame.uvRowStride), 0,
-                frame.vBuf, RowStride(frame.uvRowStride), 0,
-                argbBuf, RowStride(width * 4), 0,
-                width, height
-            )
-        } else if (frame.isNv21) {
-            Yuv.convertNV21ToARGB(
-                frame.yBuf, RowStride(frame.yRowStride), 0,
-                frame.uBuf, RowStride(frame.uvRowStride), 0,
-                argbBuf, RowStride(width * 4), 0,
-                width, height
-            )
-        } else {
-            Yuv.convertNV12ToARGB(
-                frame.yBuf, RowStride(frame.yRowStride), 0,
-                frame.vBuf, RowStride(frame.uvRowStride), 0,
-                argbBuf, RowStride(width * 4), 0,
-                width, height
-            )
-        }
-
-        val rotateMode = when (orientation) {
-            90 -> RotateMode.ROTATE_90
-            180 -> RotateMode.ROTATE_180
-            270 -> RotateMode.ROTATE_270
-            else -> RotateMode.ROTATE_0
-        }
-
-        val outWidth: Int
+    private data class PendingResult(
+        val srcBuf: ByteBuffer,
+        val outWidth: Int,
         val outHeight: Int
-        val srcBuf: ByteBuffer
-        val srcStride: Int
-
-        if (rotateMode == RotateMode.ROTATE_0) {
-            outWidth = width
-            outHeight = height
-            srcBuf = argbBuf
-            srcStride = width * 4
-        } else {
-            outWidth = height
-            outHeight = width
-            val rotatedSize = outWidth * outHeight * 4
-            var rotatedBuf = cachedRotatedArgbBuf
-            if (rotatedBuf == null || rotatedBuf.capacity() < rotatedSize) {
-                rotatedBuf = ByteBuffer.allocateDirect(rotatedSize).order(ByteOrder.nativeOrder())
-                cachedRotatedArgbBuf = rotatedBuf
-            }
-            rotatedBuf.clear()
-            Yuv.rotateARGBRotate(
-                argbBuf, RowStride(width * 4), 0,
-                rotatedBuf, RowStride(outWidth * 4), 0,
-                width, height,
-                rotateMode.degrees
-            )
-            srcBuf = rotatedBuf
-            srcStride = outWidth * 4
-        }
-
-        var bitmap = cachedBitmap
-        if (bitmap == null || bitmap.width != outWidth || bitmap.height != outHeight) {
-            bitmap = Bitmap.createBitmap(outWidth, outHeight, Bitmap.Config.ARGB_8888)
-            cachedBitmap = bitmap
-        }
-        srcBuf.position(0)
-        bitmap.copyPixelsFromBuffer(srcBuf)
-        return bitmap
-    }
+    )
 
     companion object {
         private const val TAG = "CameraController"
