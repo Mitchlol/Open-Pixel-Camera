@@ -13,6 +13,7 @@ import android.util.Log
 import android.util.Range
 import android.util.Size
 import android.view.Surface
+import io.github.crow_misia.libyuv.RotateMode
 import io.github.crow_misia.libyuv.RowStride
 import io.github.crow_misia.libyuv.Yuv
 import java.nio.ByteBuffer
@@ -39,6 +40,7 @@ class CameraController(private val context: Context) {
     private var cachedUBuf: ByteBuffer? = null
     private var cachedVBuf: ByteBuffer? = null
     private var cachedArgbBuf: ByteBuffer? = null
+    private var cachedRotatedArgbBuf: ByteBuffer? = null
     private var cachedBitmap: Bitmap? = null
 
     var onFrameAvailable: ((Bitmap) -> Unit)? = null
@@ -206,7 +208,7 @@ class CameraController(private val context: Context) {
         pendingFrame = null
 
         val processStart = System.nanoTime()
-        val bitmap = yuv420ToBitmap(frame)
+        val bitmap = yuv420ToBitmap(frame, sensorOrientation)
         val processMs = (System.nanoTime() - processStart) / 1_000_000.0
         if (processMs > 35.0) {
             Log.w(TAG, "SLOW PROCESS: ${"%.1f".format(processMs)}ms")
@@ -415,7 +417,7 @@ class CameraController(private val context: Context) {
         val height: Int
     )
 
-    private fun yuv420ToBitmap(frame: FrameData): Bitmap? {
+    private fun yuv420ToBitmap(frame: FrameData, orientation: Int): Bitmap? {
         val width = frame.width
         val height = frame.height
 
@@ -451,13 +453,50 @@ class CameraController(private val context: Context) {
             )
         }
 
+        val rotateMode = when (orientation) {
+            90 -> RotateMode.ROTATE_90
+            180 -> RotateMode.ROTATE_180
+            270 -> RotateMode.ROTATE_270
+            else -> RotateMode.ROTATE_0
+        }
+
+        val outWidth: Int
+        val outHeight: Int
+        val srcBuf: ByteBuffer
+        val srcStride: Int
+
+        if (rotateMode == RotateMode.ROTATE_0) {
+            outWidth = width
+            outHeight = height
+            srcBuf = argbBuf
+            srcStride = width * 4
+        } else {
+            outWidth = height
+            outHeight = width
+            val rotatedSize = outWidth * outHeight * 4
+            var rotatedBuf = cachedRotatedArgbBuf
+            if (rotatedBuf == null || rotatedBuf.capacity() < rotatedSize) {
+                rotatedBuf = ByteBuffer.allocateDirect(rotatedSize).order(ByteOrder.nativeOrder())
+                cachedRotatedArgbBuf = rotatedBuf
+            }
+            rotatedBuf.clear()
+            Yuv.rotateARGBRotate(
+                argbBuf, RowStride(width * 4), 0,
+                rotatedBuf, RowStride(outWidth * 4), 0,
+                width, height,
+                rotateMode.degrees
+            )
+            srcBuf = rotatedBuf
+            srcStride = outWidth * 4
+        }
+
         var bitmap = cachedBitmap
-        if (bitmap == null || bitmap.width != width || bitmap.height != height) {
-            bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        if (bitmap == null || bitmap.width != outWidth || bitmap.height != outHeight) {
+            bitmap = Bitmap.createBitmap(outWidth, outHeight, Bitmap.Config.ARGB_8888)
             cachedBitmap = bitmap
         }
-        argbBuf.position(0)
-        bitmap.copyPixelsFromBuffer(argbBuf)
+        srcBuf.position(0)
+        bitmap.copyPixelsFromBuffer(srcBuf)
         return bitmap
     }
 

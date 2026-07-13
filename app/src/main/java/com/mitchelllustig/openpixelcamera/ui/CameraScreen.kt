@@ -688,7 +688,7 @@ private fun CameraPreview(
                 val range = cameraController.isoRange
                 onIsoRangeReady(range.lower, range.upper)
             }
-            val processed = trailProcessor.processFrame(frame, cameraController.sensorOrientation)
+            val processed = trailProcessor.processFrame(frame)
 
             val holder = surfaceHolder
             if (holder != null) {

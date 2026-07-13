@@ -16,9 +16,6 @@ class TrailProcessor {
     private var trailCanvas: Canvas? = null
     private var outputBitmap: Bitmap? = null
     private var outputCanvas: Canvas? = null
-    private var rotatedBitmap: Bitmap? = null
-    private var rotatedCanvas: Canvas? = null
-    private var sensorOrientation: Int = 0
 
     var threshold: Float = 0.5f
         set(value) { field = value.coerceIn(0f, 1f) }
@@ -29,10 +26,9 @@ class TrailProcessor {
     var fadePercent: Float = 0.25f
         set(value) { field = value.coerceIn(0f, 1f) }
 
-    fun processFrame(frame: Bitmap, orientation: Int = 0): Bitmap {
+    fun processFrame(frame: Bitmap): Bitmap {
         val width = frame.width
         val height = frame.height
-        sensorOrientation = orientation
 
         if (width != currentWidth || height != currentHeight) {
             currentWidth = width
@@ -47,12 +43,6 @@ class TrailProcessor {
             outputBitmap?.recycle()
             outputBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             outputCanvas = Canvas(outputBitmap!!)
-            rotatedBitmap?.recycle()
-            val isRotated = orientation == 90 || orientation == 270
-            val rw = if (isRotated) height else width
-            val rh = if (isRotated) width else height
-            rotatedBitmap = Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888)
-            rotatedCanvas = Canvas(rotatedBitmap!!)
         }
 
         val pBuf = pixelBuf!!
@@ -110,19 +100,7 @@ class TrailProcessor {
         canvas.drawBitmap(frame, 0f, 0f, null)
         canvas.drawBitmap(trailBitmap!!, 0f, 0f, null)
 
-        val rCanvas = rotatedCanvas!!
-        rCanvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
-
-        val matrix = android.graphics.Matrix()
-        matrix.setRotate(sensorOrientation.toFloat(), outputBitmap!!.width / 2f, outputBitmap!!.height / 2f)
-        val srcRect = android.graphics.RectF(0f, 0f, outputBitmap!!.width.toFloat(), outputBitmap!!.height.toFloat())
-        matrix.mapRect(srcRect)
-        val dx = (rotatedBitmap!!.width - srcRect.width()) / 2f - srcRect.left
-        val dy = (rotatedBitmap!!.height - srcRect.height()) / 2f - srcRect.top
-        matrix.postTranslate(dx, dy)
-        rCanvas.drawBitmap(outputBitmap!!, matrix, null)
-
-        return rotatedBitmap!!
+        return outputBitmap!!
     }
 
     fun clear() {
@@ -131,9 +109,6 @@ class TrailProcessor {
         outputBitmap?.recycle()
         outputBitmap = null
         outputCanvas = null
-        rotatedBitmap?.recycle()
-        rotatedBitmap = null
-        rotatedCanvas = null
         trailBitmap?.recycle()
         trailBitmap = null
         trailCanvas = null
