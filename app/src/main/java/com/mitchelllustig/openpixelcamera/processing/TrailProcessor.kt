@@ -58,8 +58,16 @@ class TrailProcessor {
         val fadeStart = trailLength - fadeFrames
 
         for (i in 0 until size) {
-            val age = tAge[i].toInt()
-            if (age > 0) {
+            val pixel = pBuf[i]
+            val r = (pixel shr 16) and 0xFF
+            val g = (pixel shr 8) and 0xFF
+            val b = pixel and 0xFF
+
+            if (r > thresholdValue || g > thresholdValue || b > thresholdValue) {
+                tPix[i] = pixel or 0xFF000000.toInt()
+                tAge[i] = 1
+            } else if (tAge[i] > 0) {
+                val age = tAge[i].toInt()
                 val newAge = age + 1
                 if (newAge > trailLength) {
                     tAge[i] = 0
@@ -67,29 +75,16 @@ class TrailProcessor {
                 } else {
                     tAge[i] = newAge.toByte()
                     if (newAge > fadeStart) {
-                        val pixel = tPix[i]
-                        val r = Color.red(pixel)
-                        val g = Color.green(pixel)
-                        val b = Color.blue(pixel)
-                        val alpha = Color.alpha(pixel)
+                        val tp = tPix[i]
+                        val ta = (tp shr 24) and 0xFF
+                        val tr = (tp shr 16) and 0xFF
+                        val tg = (tp shr 8) and 0xFF
+                        val tb = tp and 0xFF
                         val remaining = trailLength - age + 1
-                        val remainingNew = remaining - 1
-                        val na = (alpha * remainingNew + remaining / 2) / remaining
-                        tPix[i] = Color.argb(na, r, g, b)
+                        val na = (ta * (remaining - 1) + remaining / 2) / remaining
+                        tPix[i] = (na shl 24) or (tr shl 16) or (tg shl 8) or tb
                     }
                 }
-            }
-        }
-
-        for (i in 0 until size) {
-            val pixel = pBuf[i]
-            val r = Color.red(pixel)
-            val g = Color.green(pixel)
-            val b = Color.blue(pixel)
-
-            if (r > thresholdValue || g > thresholdValue || b > thresholdValue) {
-                tPix[i] = pixel or 0xFF000000.toInt()
-                tAge[i] = 1
             }
         }
 
