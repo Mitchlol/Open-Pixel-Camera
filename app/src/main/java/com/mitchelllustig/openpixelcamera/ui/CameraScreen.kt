@@ -286,6 +286,7 @@ fun CameraScreen() {
 
     var showCameraPanel by remember { mutableStateOf(false) }
     var showOutputPanel by remember { mutableStateOf(false) }
+    var torchOn by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -562,6 +563,16 @@ fun CameraScreen() {
                                 onClick = { showOutputPanel = !showOutputPanel; if (showOutputPanel) showCameraPanel = false },
                                 iconType = PanelIconType.OUTPUT
                             )
+                            if (cameraController.torchSupported) {
+                                PanelToggleButton(
+                                    isActive = torchOn,
+                                    onClick = {
+                                        torchOn = !torchOn
+                                        cameraController.setTorchEnabled(torchOn)
+                                    },
+                                    iconType = PanelIconType.TORCH
+                                )
+                            }
                         }
                     }
                 }
@@ -741,7 +752,7 @@ private fun CameraPreview(
     }
 }
 
-private enum class PanelIconType { CAMERA, OUTPUT }
+private enum class PanelIconType { CAMERA, OUTPUT, TORCH }
 
 @Composable
 private fun PanelToggleButton(
@@ -753,6 +764,7 @@ private fun PanelToggleButton(
     val iconRes = when (iconType) {
         PanelIconType.CAMERA -> R.drawable.ic_gesture
         PanelIconType.OUTPUT -> R.drawable.ic_settings
+        PanelIconType.TORCH -> R.drawable.ic_flashlight
     }
     val bgColor = if (isActive) Color.White.copy(alpha = 0.3f) else Color.Black.copy(alpha = 0.65f)
     val borderColor = Color.White.copy(alpha = if (isActive) 0.6f else 0.35f)

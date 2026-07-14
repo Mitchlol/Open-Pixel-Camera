@@ -56,6 +56,11 @@ class CameraController(private val context: Context) {
     var availableFpsOptions: List<Int> = emptyList()
         private set
 
+    var torchSupported = false
+        private set
+    var torchEnabled = false
+        private set
+
     var availableResolutions: List<Size> = emptyList()
         private set
 
@@ -402,6 +407,9 @@ class CameraController(private val context: Context) {
 
         Log.i(TAG, "=========================")
 
+        torchSupported = chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        Log.i(TAG, "Torch supported: $torchSupported")
+
         val candidateFps = listOf(4, 7, 15, 20, 24, 30, 45, 48, 60)
 
         val inAeRange = candidateFps.filter { fps ->
@@ -451,6 +459,9 @@ class CameraController(private val context: Context) {
                 set(CaptureRequest.SENSOR_SENSITIVITY, iso)
                 set(CaptureRequest.SENSOR_FRAME_DURATION, actualExposureNanos)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, targetFpsRange)
+                if (torchSupported) {
+                    set(CaptureRequest.FLASH_MODE, if (torchEnabled) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
+                }
             }
 
             session.setRepeatingRequest(request.build(), null, backgroundHandler)
@@ -461,6 +472,12 @@ class CameraController(private val context: Context) {
         userFps = fps
         targetFpsRange = Range(fps, fps)
         actualExposureNanos = (1_000_000_000L / fps).coerceIn(exposureRange.lower, exposureRange.upper)
+        updateIso(currentIso)
+    }
+
+    fun setTorchEnabled(enabled: Boolean) {
+        if (!torchSupported) return
+        torchEnabled = enabled
         updateIso(currentIso)
     }
 
@@ -509,6 +526,9 @@ class CameraController(private val context: Context) {
                 set(CaptureRequest.SENSOR_SENSITIVITY, iso)
                 set(CaptureRequest.SENSOR_FRAME_DURATION, actualExposureNanos)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, targetFpsRange)
+                if (torchSupported) {
+                    set(CaptureRequest.FLASH_MODE, if (torchEnabled) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
+                }
             }
 
             session.setRepeatingRequest(request.build(), null, backgroundHandler)
