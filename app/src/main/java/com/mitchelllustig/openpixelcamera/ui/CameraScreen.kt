@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.PorterDuff
 import android.net.Uri
+import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -79,6 +80,7 @@ import com.mitchelllustig.openpixelcamera.camera.CameraController
 import com.mitchelllustig.openpixelcamera.processing.TrailProcessor
 import com.mitchelllustig.openpixelcamera.recording.VideoRecorder
 import android.graphics.Canvas as AwtCanvas
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.math.pow
 
 private const val PREFS_NAME = "open_pixel_camera"
@@ -113,6 +115,7 @@ fun CameraScreen() {
     var audioEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_AUDIO_ENABLED, true)) }
     var fadePercent by remember { mutableFloatStateOf(prefs.getFloat(KEY_FADE_PERCENT, 25f)) }
     var hideBanner by remember { mutableStateOf(prefs.getBoolean(KEY_HIDE_BANNER, false)) }
+    var settingsRestored by remember { mutableStateOf(false) }
 
     val cameraController = remember {
         CameraController(context).apply {
@@ -310,33 +313,39 @@ fun CameraScreen() {
                 onIsoRangeReady = { lower, upper ->
                         isoRange = lower.toFloat()..upper.toFloat()
                         isoPosition = isoToPosition(isoFromPosition(isoPosition))
-                        cameraController.updateIso(isoFromPosition(isoPosition))
 
                         val available = cameraController.availableFpsOptions
                         if (available.isNotEmpty()) {
                             fpsOptions = available
-                            val savedFps = prefs.getInt(KEY_FPS, available.last())
-                            val savedIndex = available.indexOf(savedFps).coerceAtLeast(0)
-                            fpsSelectedIndex = savedIndex
-                            cameraController.updateFps(available[savedIndex])
                         }
 
                         val resolutions = cameraController.availableResolutions
                             .map { Pair(it.width, it.height) }
                         if (resolutions.isNotEmpty()) {
                             resolutionOptions = resolutions
-                            val savedResIndex = if (prefs.contains(KEY_RESOLUTION_INDEX)) {
-                                prefs.getInt(KEY_RESOLUTION_INDEX, 0).coerceIn(0, resolutions.size - 1)
-                            } else {
-                                resolutions.indices.minByOrNull { i ->
-                                    val (w, h) = resolutions[i]
-                                    val dw = w - 640
-                                    val dh = h - 480
-                                    dw * dw + dh * dh
-                                } ?: 0
+                        }
+
+                        if (!settingsRestored) {
+                            settingsRestored = true
+                            if (available.isNotEmpty()) {
+                                val savedFps = prefs.getInt(KEY_FPS, available.last())
+                                val savedIndex = available.indexOf(savedFps).coerceAtLeast(0)
+                                fpsSelectedIndex = savedIndex
                             }
-                            resolutionSelectedIndex = savedResIndex
-                            currentResolution = resolutions[savedResIndex]
+                            if (resolutions.isNotEmpty()) {
+                                val savedResIndex = if (prefs.contains(KEY_RESOLUTION_INDEX)) {
+                                    prefs.getInt(KEY_RESOLUTION_INDEX, 0).coerceIn(0, resolutions.size - 1)
+                                } else {
+                                    resolutions.indices.minByOrNull { i ->
+                                        val (w, h) = resolutions[i]
+                                        val dw = w - 640
+                                        val dh = h - 480
+                                        dw * dw + dh * dh
+                                    } ?: 0
+                                }
+                                resolutionSelectedIndex = savedResIndex
+                                currentResolution = resolutions[savedResIndex]
+                            }
                         }
                     },
                 initialIso = isoFromPosition(isoPosition),
@@ -682,34 +691,69 @@ private fun CameraPreview(
 
     LaunchedEffect(cameraActive, surfaceHolder, cameraRestartNonce) {
         if (!cameraActive || surfaceHolder == null) return@LaunchedEffect
-        cameraController.onFrameAvailable = { frame ->
-            if (!isoRangeReported) {
-                onIsoRangeReported()
-                val range = cameraController.isoRange
-                onIsoRangeReady(range.lower, range.upper)
-            }
-            val processed = trailProcessor.processFrame(frame)
 
-            val holder = surfaceHolder
-            if (holder != null) {
-                val canvas: AwtCanvas? = try { holder.lockCanvas() } catch (_: Exception) { null }
-                if (canvas != null) {
-                    try {
-                        canvas.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-                        canvas.drawBitmap(processed, 0f, 0f, null)
-                    } finally {
-                        holder.unlockCanvasAndPost(canvas)
+        val trailThread = android.os.HandlerThread("TrailThread").apply { start() }
+        val trailHandler = android.os.Handler(trailThread.looper)
+        val drawThread = android.os.HandlerThread("DrawThread").apply { start() }
+        val drawHandler = android.os.Handler(drawThread.looper)
+
+        var uiFrameCount = 0
+        cameraController.onFrameAvailable = { buf, w, h ->
+            trailHandler.post {
+                if (!isoRangeReported) {
+                    onIsoRangeReported()
+                    val range = cameraController.isoRange
+                    onIsoRangeReady(range.lower, range.upper)
+                }
+                val t0 = System.nanoTime()
+                val processed = trailProcessor.processFrame(buf, w, h)
+                val t1 = System.nanoTime()
+
+                drawHandler.post {
+                    val holder = surfaceHolder
+                    if (holder != null) {
+                        val canvas: AwtCanvas? = try { holder.lockCanvas() } catch (_: Exception) { null }
+                        if (canvas != null) {
+                            try {
+                                canvas.drawBitmap(processed, 0f, 0f, null)
+                            } finally {
+                                holder.unlockCanvasAndPost(canvas)
+                            }
+                        }
+                    }
+                    val t2 = System.nanoTime()
+
+                    onFrameUpdate(processed)
+
+                    if (videoRecorder.isRecording) {
+                        videoRecorder.drawFrame(processed)
+                    }
+
+                    uiFrameCount++
+                    val trailMs = (t1 - t0) / 1_000_000.0
+                    val drawMs = (t2 - t1) / 1_000_000.0
+                    val totalMs = (t2 - t0) / 1_000_000.0
+                    if (uiFrameCount % 30 == 0) {
+                        Log.i("CameraScreen", "UI frame #$uiFrameCount | trail=${"%.1f".format(trailMs)}ms draw=${"%.1f".format(drawMs)}ms total=${"%.1f".format(totalMs)}ms")
+                    }
+                    if (totalMs > 35.0) {
+                        Log.w("CameraScreen", "SLOW UI frame #$uiFrameCount | trail=${"%.1f".format(trailMs)}ms draw=${"%.1f".format(drawMs)}ms total=${"%.1f".format(totalMs)}ms")
                     }
                 }
             }
-
-            onFrameUpdate(processed)
-
-            if (videoRecorder.isRecording) {
-                videoRecorder.drawFrame(processed)
-            }
         }
         cameraController.openCamera(width = captureWidth, height = captureHeight, iso = initialIso)
+
+        try {
+            kotlinx.coroutines.suspendCancellableCoroutine {}
+        } finally {
+            trailHandler.removeCallbacksAndMessages(null)
+            trailThread.quitSafely()
+            trailThread.join()
+            drawHandler.removeCallbacksAndMessages(null)
+            drawThread.quitSafely()
+            drawThread.join()
+        }
     }
 }
 

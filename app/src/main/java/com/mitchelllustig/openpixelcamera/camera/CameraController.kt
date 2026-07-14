@@ -2,7 +2,6 @@ package com.mitchelllustig.openpixelcamera.camera
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.Bitmap
 import android.graphics.ImageFormat
 import android.hardware.camera2.*
 import android.media.Image
@@ -37,17 +36,20 @@ class CameraController(private val context: Context) {
     @Volatile private var openGeneration = 0
 
     private var cachedArgbBuf: ByteBuffer? = null
-    private var cachedRotatedArgbBuf: ByteBuffer? = null
-    private var cachedBitmap: Bitmap? = null
+    private var cachedYBuf: ByteBuffer? = null
+    private var cachedUvBuf: ByteBuffer? = null
+    private var cachedRotatedYBuf: ByteBuffer? = null
+    private var cachedRotatedUvBuf: ByteBuffer? = null
     private var cachedRotateMode = RotateMode.ROTATE_0
 
-    var onFrameAvailable: ((Bitmap) -> Unit)? = null
+    var onFrameAvailable: ((ByteBuffer, Int, Int) -> Unit)? = null
     var onError: ((String) -> Unit)? = null
     var onActualResolutionChanged: ((Int, Int) -> Unit)? = null
     var sensorOrientation: Int = 0
         private set
 
     private var targetFpsRange: Range<Int> = Range(30, 30)
+    private var userFps: Int = 30
     private var exposureRange: Range<Long> = Range(33_333_333L, 33_333_333L)
     var isoRange: Range<Int> = Range(100, 1600)
         private set
@@ -99,16 +101,10 @@ class CameraController(private val context: Context) {
         ).apply {
             setOnImageAvailableListener({ reader ->
                 val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-                val now = System.nanoTime()
-                val deltaMs = if (lastFrameTimeNanos > 0) (now - lastFrameTimeNanos) / 1_000_000.0 else 0.0
-                lastFrameTimeNanos = now
+                val frameStart = System.nanoTime()
+                val deltaMs = if (lastFrameTimeNanos > 0) (frameStart - lastFrameTimeNanos) / 1_000_000.0 else 0.0
+                lastFrameTimeNanos = frameStart
                 frameCount++
-                if (frameCount % 30 == 0) {
-                    Log.i(TAG, "Frame #$frameCount delivered, delta=${"%.1f".format(deltaMs)}ms")
-                }
-                if (deltaMs > 50.0) {
-                    Log.w(TAG, "FRAME GAP: ${"%.1f".format(deltaMs)}ms since last frame")
-                }
 
                 val w = image.width
                 val h = image.height
@@ -117,71 +113,210 @@ class CameraController(private val context: Context) {
                 val uPlane = image.planes[1]
                 val vPlane = image.planes[2]
 
-                val argbSize = w * h * 4
-                var argbBuf = cachedArgbBuf
-                if (argbBuf == null || argbBuf.capacity() < argbSize) {
-                    argbBuf = ByteBuffer.allocateDirect(argbSize).order(ByteOrder.nativeOrder())
-                    cachedArgbBuf = argbBuf
-                }
-                argbBuf.clear()
-
                 val yRowStride = yPlane.rowStride
                 val uvRowStride = uPlane.rowStride
                 val uvPixelStride = uPlane.pixelStride
                 val isNv21 = vPlane.buffer.position() == 0
 
-                if (uvPixelStride == 1) {
-                    Yuv.convertI420ToARGB(
-                        yPlane.buffer, RowStride(yRowStride), yPlane.buffer.position(),
-                        uPlane.buffer, RowStride(uvRowStride), uPlane.buffer.position(),
-                        vPlane.buffer, RowStride(uvRowStride), vPlane.buffer.position(),
-                        argbBuf, RowStride(w * 4), 0,
-                        w, h
-                    )
-                } else if (isNv21) {
-                    Yuv.convertNV21ToARGB(
-                        yPlane.buffer, RowStride(yRowStride), yPlane.buffer.position(),
-                        uPlane.buffer, RowStride(uvRowStride), uPlane.buffer.position(),
-                        argbBuf, RowStride(w * 4), 0,
-                        w, h
-                    )
-                } else {
-                    Yuv.convertNV12ToARGB(
-                        yPlane.buffer, RowStride(yRowStride), yPlane.buffer.position(),
-                        vPlane.buffer, RowStride(uvRowStride), vPlane.buffer.position(),
-                        argbBuf, RowStride(w * 4), 0,
-                        w, h
-                    )
+                val t0 = System.nanoTime()
+
+                val yBufSize = yRowStride * h
+                var yBuf = cachedYBuf
+                if (yBuf == null || yBuf.capacity() < yBufSize + SIMD_PAD) {
+                    yBuf = ByteBuffer.allocateDirect(yBufSize + SIMD_PAD).order(ByteOrder.nativeOrder())
+                    cachedYBuf = yBuf
+                }
+                yBuf.clear()
+                yPlane.buffer.position(0)
+                val yCopy = minOf(yBufSize, yPlane.buffer.capacity())
+                yPlane.buffer.limit(yCopy)
+                yBuf.put(yPlane.buffer)
+                yBuf.flip()
+
+                val uvBufSize = uvRowStride * (h / 2)
+                var uvBuf = cachedUvBuf
+                if (uvBuf == null || uvBuf.capacity() < uvBufSize + SIMD_PAD) {
+                    uvBuf = ByteBuffer.allocateDirect(uvBufSize + SIMD_PAD).order(ByteOrder.nativeOrder())
+                    cachedUvBuf = uvBuf
                 }
 
-                image.close()
+                var vBuf: ByteBuffer? = null
+
+                if (uvPixelStride == 1) {
+                    uvBuf.clear()
+                    uPlane.buffer.position(0)
+                    val uCopy = minOf(uvBufSize, uPlane.buffer.capacity())
+                    uPlane.buffer.limit(uCopy)
+                    uvBuf.put(uPlane.buffer)
+                    uvBuf.flip()
+
+                    vPlane.buffer.position(0)
+                    val vCopy = minOf(uvBufSize, vPlane.buffer.capacity())
+                    vPlane.buffer.limit(vCopy)
+                    val vb = ByteBuffer.allocateDirect(vCopy + SIMD_PAD).order(ByteOrder.nativeOrder())
+                    vb.put(vPlane.buffer)
+                    vb.flip()
+                    vBuf = vb
+                } else {
+                    if (isNv21) {
+                        uvBuf.clear()
+                        uPlane.buffer.position(0)
+                        val uvCopy = minOf(uvBufSize, uPlane.buffer.capacity())
+                        uPlane.buffer.limit(uvCopy)
+                        uvBuf.put(vPlane.buffer)
+                        uvBuf.flip()
+                    } else {
+                        uvBuf.clear()
+                        vPlane.buffer.position(0)
+                        val uvCopy = minOf(uvBufSize, vPlane.buffer.capacity())
+                        vPlane.buffer.limit(uvCopy)
+                        uvBuf.put(uPlane.buffer)
+                        uvBuf.flip()
+                    }
+                }
+
+                val t1 = System.nanoTime()
 
                 val outW: Int
                 val outH: Int
-                val srcBuf: ByteBuffer
 
                 if (cachedRotateMode == RotateMode.ROTATE_0) {
                     outW = w
                     outH = h
-                    srcBuf = argbBuf
+
+                    val argbSize = w * h * 4
+                    var argbBuf = cachedArgbBuf
+                    if (argbBuf == null || argbBuf.capacity() < argbSize) {
+                        argbBuf = ByteBuffer.allocateDirect(argbSize).order(ByteOrder.nativeOrder())
+                        cachedArgbBuf = argbBuf
+                    }
+                    argbBuf.clear()
+
+                    if (uvPixelStride == 1) {
+                        Yuv.convertI420ToARGB(
+                            yBuf, RowStride(yRowStride), 0,
+                            uvBuf, RowStride(uvRowStride), 0,
+                            vBuf!!, RowStride(uvRowStride), 0,
+                            argbBuf, RowStride(w * 4), 0,
+                            w, h
+                        )
+                    } else if (isNv21) {
+                        Yuv.convertNV21ToARGB(
+                            yBuf, RowStride(yRowStride), 0,
+                            uvBuf, RowStride(uvRowStride), 0,
+                            argbBuf, RowStride(w * 4), 0,
+                            w, h
+                        )
+                    } else {
+                        Yuv.convertNV12ToARGB(
+                            yBuf, RowStride(yRowStride), 0,
+                            uvBuf, RowStride(uvRowStride), 0,
+                            argbBuf, RowStride(w * 4), 0,
+                            w, h
+                        )
+                    }
                 } else {
                     outW = h
                     outH = w
-                    val rotatedSize = outW * outH * 4
-                    var rotatedBuf = cachedRotatedArgbBuf
-                    if (rotatedBuf == null || rotatedBuf.capacity() < rotatedSize) {
-                        rotatedBuf = ByteBuffer.allocateDirect(rotatedSize).order(ByteOrder.nativeOrder())
-                        cachedRotatedArgbBuf = rotatedBuf
+
+                    val rotYSize = w * h
+                    var rotYBuf = cachedRotatedYBuf
+                    if (rotYBuf == null || rotYBuf.capacity() < rotYSize + SIMD_PAD) {
+                        rotYBuf = ByteBuffer.allocateDirect(rotYSize + SIMD_PAD).order(ByteOrder.nativeOrder())
+                        cachedRotatedYBuf = rotYBuf
                     }
-                    rotatedBuf.clear()
-                    Yuv.rotateARGBRotate(
-                        argbBuf, RowStride(w * 4), 0,
-                        rotatedBuf, RowStride(outW * 4), 0,
-                        w, h,
-                        cachedRotateMode.degrees
-                    )
-                    srcBuf = rotatedBuf
+                    rotYBuf.clear()
+
+                    val rotUvSize = (h / 2) * w * 2
+                    var rotUvBuf = cachedRotatedUvBuf
+                    if (rotUvBuf == null || rotUvBuf.capacity() < rotUvSize + SIMD_PAD) {
+                        rotUvBuf = ByteBuffer.allocateDirect(rotUvSize + SIMD_PAD).order(ByteOrder.nativeOrder())
+                        cachedRotatedUvBuf = rotUvBuf
+                    }
+                    rotUvBuf.clear()
+
+                    val rotDstYStride = RowStride(h)
+                    val rotDstUvStride = RowStride(h)
+
+                    if (uvPixelStride == 1) {
+                        val rotVBuf = ByteBuffer.allocateDirect(rotUvSize + SIMD_PAD).order(ByteOrder.nativeOrder())
+                        val rotI420UStride = RowStride(h / 2)
+                        Yuv.rotateI420Rotate(
+                            yBuf, RowStride(yRowStride), 0,
+                            uvBuf, RowStride(uvRowStride), 0,
+                            vBuf!!, RowStride(uvRowStride), 0,
+                            rotYBuf, rotDstYStride, 0,
+                            rotUvBuf, rotI420UStride, 0,
+                            rotVBuf, rotI420UStride, 0,
+                            w, h,
+                            cachedRotateMode.degrees
+                        )
+                        val argbSize = outW * outH * 4
+                        var argbBuf = cachedArgbBuf
+                        if (argbBuf == null || argbBuf.capacity() < argbSize) {
+                            argbBuf = ByteBuffer.allocateDirect(argbSize).order(ByteOrder.nativeOrder())
+                            cachedArgbBuf = argbBuf
+                        }
+                        argbBuf.clear()
+                        Yuv.convertI420ToARGB(
+                            rotYBuf, rotDstYStride, 0,
+                            rotUvBuf, rotI420UStride, 0,
+                            rotVBuf, rotI420UStride, 0,
+                            argbBuf, RowStride(outW * 4), 0,
+                            outW, outH
+                        )
+                    } else if (isNv21) {
+                        Yuv.rotateNV21Rotate(
+                            yBuf, RowStride(yRowStride), 0,
+                            uvBuf, RowStride(uvRowStride), 0,
+                            rotYBuf, rotDstYStride, 0,
+                            rotUvBuf, rotDstUvStride, 0,
+                            w, h,
+                            cachedRotateMode.degrees
+                        )
+                        val argbSize = outW * outH * 4
+                        var argbBuf = cachedArgbBuf
+                        if (argbBuf == null || argbBuf.capacity() < argbSize) {
+                            argbBuf = ByteBuffer.allocateDirect(argbSize).order(ByteOrder.nativeOrder())
+                            cachedArgbBuf = argbBuf
+                        }
+                        argbBuf.clear()
+                        Yuv.convertNV21ToARGB(
+                            rotYBuf, rotDstYStride, 0,
+                            rotUvBuf, rotDstUvStride, 0,
+                            argbBuf, RowStride(outW * 4), 0,
+                            outW, outH
+                        )
+                    } else {
+                        Yuv.rotateNV12Rotate(
+                            yBuf, RowStride(yRowStride), 0,
+                            uvBuf, RowStride(uvRowStride), 0,
+                            rotYBuf, rotDstYStride, 0,
+                            rotUvBuf, rotDstUvStride, 0,
+                            w, h,
+                            cachedRotateMode.degrees
+                        )
+                        val argbSize = outW * outH * 4
+                        var argbBuf = cachedArgbBuf
+                        if (argbBuf == null || argbBuf.capacity() < argbSize) {
+                            argbBuf = ByteBuffer.allocateDirect(argbSize).order(ByteOrder.nativeOrder())
+                            cachedArgbBuf = argbBuf
+                        }
+                        argbBuf.clear()
+                        Yuv.convertNV12ToARGB(
+                            rotYBuf, rotDstYStride, 0,
+                            rotUvBuf, rotDstUvStride, 0,
+                            argbBuf, RowStride(outW * 4), 0,
+                            outW, outH
+                        )
+                    }
                 }
+
+                image.close()
+
+                val t2 = System.nanoTime()
+
+                val srcBuf = cachedArgbBuf!!
 
                 srcBuf.position(0)
                 srcBuf.limit(outW * outH * 4)
@@ -190,6 +325,16 @@ class CameraController(private val context: Context) {
                 if (processingIdle) {
                     processingIdle = false
                     processingHandler?.post { drainPendingResult() }
+                }
+
+                val copyMs = (t1 - t0) / 1_000_000.0
+                val convertMs = (t2 - t1) / 1_000_000.0
+                val totalMs = (t2 - frameStart) / 1_000_000.0
+                if (frameCount % 30 == 0) {
+                    Log.i(TAG, "Frame #$frameCount | ${w}x${h} | delta=${"%.1f".format(deltaMs)}ms | copy=${"%.1f".format(copyMs)}ms convert+rotate=${"%.1f".format(convertMs)}ms total=${"%.1f".format(totalMs)}ms")
+                }
+                if (totalMs > 35.0) {
+                    Log.w(TAG, "SLOW FRAME #$frameCount | copy=${"%.1f".format(copyMs)}ms convert+rotate=${"%.1f".format(convertMs)}ms total=${"%.1f".format(totalMs)}ms")
                 }
             }, backgroundHandler)
         }
@@ -230,19 +375,8 @@ class CameraController(private val context: Context) {
         }
         pendingResult = null
 
-        val processStart = System.nanoTime()
-        var bitmap = cachedBitmap
-        if (bitmap == null || bitmap.width != result.outWidth || bitmap.height != result.outHeight) {
-            bitmap = Bitmap.createBitmap(result.outWidth, result.outHeight, Bitmap.Config.ARGB_8888)
-            cachedBitmap = bitmap
-        }
         result.srcBuf.position(0)
-        bitmap.copyPixelsFromBuffer(result.srcBuf)
-        val processMs = (System.nanoTime() - processStart) / 1_000_000.0
-        if (processMs > 35.0) {
-            Log.w(TAG, "SLOW PROCESS: ${"%.1f".format(processMs)}ms")
-        }
-        bitmap.let { onFrameAvailable?.invoke(it) }
+        onFrameAvailable?.invoke(result.srcBuf, result.outWidth, result.outHeight)
 
         if (pendingResult != null) {
             processingHandler?.post { drainPendingResult() }
@@ -305,7 +439,8 @@ class CameraController(private val context: Context) {
         }
         Log.i(TAG, "FPS after exposure filter: $availableFpsOptions")
 
-        targetFpsRange = if (availableFpsOptions.contains(30)) Range(30, 30)
+        targetFpsRange = if (availableFpsOptions.contains(userFps)) Range(userFps, userFps)
+            else if (availableFpsOptions.contains(30)) Range(30, 30)
             else availableFpsOptions.lastOrNull()?.let { Range(it, it) }
             ?: fpsRanges?.lastOrNull { it.lower == 30 && it.upper == 30 }
             ?: fpsRanges?.lastOrNull()
@@ -313,7 +448,8 @@ class CameraController(private val context: Context) {
 
         Log.i(TAG, "Selected FPS range: $targetFpsRange")
 
-        val initialFps = if (availableFpsOptions.contains(30)) 30
+        val initialFps = if (availableFpsOptions.contains(userFps)) userFps
+            else if (availableFpsOptions.contains(30)) 30
             else availableFpsOptions.lastOrNull() ?: 30
         actualExposureNanos = (1_000_000_000L / initialFps).coerceIn(
             expRange?.lower ?: 0L,
@@ -344,6 +480,7 @@ class CameraController(private val context: Context) {
     }
 
     fun updateFps(fps: Int) {
+        userFps = fps
         targetFpsRange = Range(fps, fps)
         actualExposureNanos = (1_000_000_000L / fps).coerceIn(exposureRange.lower, exposureRange.upper)
         updateIso(currentIso)
@@ -408,8 +545,6 @@ class CameraController(private val context: Context) {
         captureSession = null
         cameraDevice?.close()
         cameraDevice = null
-        imageReader?.close()
-        imageReader = null
         pendingResult = null
         processingIdle = true
         processingThread?.quitSafely()
@@ -420,6 +555,8 @@ class CameraController(private val context: Context) {
         try { backgroundThread?.join() } catch (_: InterruptedException) {}
         backgroundThread = null
         backgroundHandler = null
+        imageReader?.close()
+        imageReader = null
     }
 
     private fun findBackCamera(): String? {
@@ -441,6 +578,7 @@ class CameraController(private val context: Context) {
     )
 
     companion object {
+        private const val SIMD_PAD = 64
         private const val TAG = "CameraController"
         private var actualExposureNanos = 33_333_333L
     }
