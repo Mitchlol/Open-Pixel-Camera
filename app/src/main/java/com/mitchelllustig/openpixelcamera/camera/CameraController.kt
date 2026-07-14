@@ -110,9 +110,10 @@ class CameraController(private val context: Context) {
                 val w = image.width
                 val h = image.height
 
-                val yPlane = image.planes[0]
-                val uPlane = image.planes[1]
-                val vPlane = image.planes[2]
+                val planes = image.planes
+                val yPlane = planes[0]
+                val uPlane = planes[1]
+                val vPlane = planes[2]
 
                 val yRowStride = yPlane.rowStride
                 val uvRowStride = uPlane.rowStride

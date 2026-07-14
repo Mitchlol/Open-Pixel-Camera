@@ -25,6 +25,8 @@ class TrailProcessor {
     private var cachedThreshold = -1f
     private var cachedTrailLen = -1
     private var cachedFadePct = -1f
+    private var cachedSrcBuf: ByteBuffer? = null
+    private var cachedIntView: java.nio.IntBuffer? = null
 
     var threshold: Float = 0.5f
         set(value) { field = value.coerceIn(0f, 1f) }
@@ -76,7 +78,12 @@ class TrailProcessor {
         val fadeStart = cachedFadeStart
 
         src.position(0)
-        src.asIntBuffer().get(pBuf)
+        if (src !== cachedSrcBuf) {
+            cachedSrcBuf = src
+            cachedIntView = src.asIntBuffer()
+        }
+        cachedIntView!!.position(0)
+        cachedIntView!!.get(pBuf)
 
         for (i in 0 until size) {
             val pixel = pBuf[i]
@@ -136,6 +143,8 @@ class TrailProcessor {
         pixelBuf = null
         trailPixels = null
         trailAge = null
+        cachedSrcBuf = null
+        cachedIntView = null
         currentWidth = 0
         currentHeight = 0
     }
