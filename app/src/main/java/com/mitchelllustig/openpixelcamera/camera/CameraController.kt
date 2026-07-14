@@ -28,8 +28,6 @@ class CameraController(private val context: Context) {
     private var backgroundHandler: Handler? = null
     private var processingThread: HandlerThread? = null
     private var processingHandler: Handler? = null
-    private var lastFrameTimeNanos = 0L
-    private var frameCount = 0
     @Volatile private var pendingResult: PendingResult? = null
     @Volatile private var processingIdle = true
     @Volatile private var opening = false
@@ -101,10 +99,6 @@ class CameraController(private val context: Context) {
         ).apply {
             setOnImageAvailableListener({ reader ->
                 val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-                val frameStart = System.nanoTime()
-                val deltaMs = if (lastFrameTimeNanos > 0) (frameStart - lastFrameTimeNanos) / 1_000_000.0 else 0.0
-                lastFrameTimeNanos = frameStart
-                frameCount++
 
                 val w = image.width
                 val h = image.height
@@ -117,8 +111,6 @@ class CameraController(private val context: Context) {
                 val uvRowStride = uPlane.rowStride
                 val uvPixelStride = uPlane.pixelStride
                 val isNv21 = vPlane.buffer.position() == 0
-
-                val t0 = System.nanoTime()
 
                 val yBufSize = yRowStride * h
                 var yBuf = cachedYBuf
@@ -174,8 +166,6 @@ class CameraController(private val context: Context) {
                         uvBuf.flip()
                     }
                 }
-
-                val t1 = System.nanoTime()
 
                 val outW: Int
                 val outH: Int
@@ -314,8 +304,6 @@ class CameraController(private val context: Context) {
 
                 image.close()
 
-                val t2 = System.nanoTime()
-
                 val srcBuf = cachedArgbBuf!!
 
                 srcBuf.position(0)
@@ -325,16 +313,6 @@ class CameraController(private val context: Context) {
                 if (processingIdle) {
                     processingIdle = false
                     processingHandler?.post { drainPendingResult() }
-                }
-
-                val copyMs = (t1 - t0) / 1_000_000.0
-                val convertMs = (t2 - t1) / 1_000_000.0
-                val totalMs = (t2 - frameStart) / 1_000_000.0
-                if (frameCount % 30 == 0) {
-                    Log.i(TAG, "Frame #$frameCount | ${w}x${h} | delta=${"%.1f".format(deltaMs)}ms | copy=${"%.1f".format(copyMs)}ms convert+rotate=${"%.1f".format(convertMs)}ms total=${"%.1f".format(totalMs)}ms")
-                }
-                if (totalMs > 35.0) {
-                    Log.w(TAG, "SLOW FRAME #$frameCount | copy=${"%.1f".format(copyMs)}ms convert+rotate=${"%.1f".format(convertMs)}ms total=${"%.1f".format(totalMs)}ms")
                 }
             }, backgroundHandler)
         }

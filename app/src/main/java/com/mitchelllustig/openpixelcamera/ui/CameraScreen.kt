@@ -6,7 +6,6 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.PorterDuff
 import android.net.Uri
-import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -697,7 +696,6 @@ private fun CameraPreview(
         val drawThread = android.os.HandlerThread("DrawThread").apply { start() }
         val drawHandler = android.os.Handler(drawThread.looper)
 
-        var uiFrameCount = 0
         cameraController.onFrameAvailable = { buf, w, h ->
             trailHandler.post {
                 if (!isoRangeReported) {
@@ -705,9 +703,7 @@ private fun CameraPreview(
                     val range = cameraController.isoRange
                     onIsoRangeReady(range.lower, range.upper)
                 }
-                val t0 = System.nanoTime()
                 val processed = trailProcessor.processFrame(buf, w, h)
-                val t1 = System.nanoTime()
 
                 drawHandler.post {
                     val holder = surfaceHolder
@@ -721,23 +717,11 @@ private fun CameraPreview(
                             }
                         }
                     }
-                    val t2 = System.nanoTime()
 
                     onFrameUpdate(processed)
 
                     if (videoRecorder.isRecording) {
                         videoRecorder.drawFrame(processed)
-                    }
-
-                    uiFrameCount++
-                    val trailMs = (t1 - t0) / 1_000_000.0
-                    val drawMs = (t2 - t1) / 1_000_000.0
-                    val totalMs = (t2 - t0) / 1_000_000.0
-                    if (uiFrameCount % 30 == 0) {
-                        Log.i("CameraScreen", "UI frame #$uiFrameCount | trail=${"%.1f".format(trailMs)}ms draw=${"%.1f".format(drawMs)}ms total=${"%.1f".format(totalMs)}ms")
-                    }
-                    if (totalMs > 35.0) {
-                        Log.w("CameraScreen", "SLOW UI frame #$uiFrameCount | trail=${"%.1f".format(trailMs)}ms draw=${"%.1f".format(drawMs)}ms total=${"%.1f".format(totalMs)}ms")
                     }
                 }
             }
