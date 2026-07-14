@@ -36,8 +36,10 @@ class CameraController(private val context: Context) {
     private var cachedArgbBuf: ByteBuffer? = null
     private var cachedYBuf: ByteBuffer? = null
     private var cachedUvBuf: ByteBuffer? = null
+    private var cachedVBuf: ByteBuffer? = null
     private var cachedRotatedYBuf: ByteBuffer? = null
     private var cachedRotatedUvBuf: ByteBuffer? = null
+    private var cachedRotatedVBuf: ByteBuffer? = null
     private var cachedRotateMode = RotateMode.ROTATE_0
 
     var onFrameAvailable: ((ByteBuffer, Int, Int) -> Unit)? = null
@@ -150,7 +152,12 @@ class CameraController(private val context: Context) {
                     vPlane.buffer.position(0)
                     val vCopy = minOf(uvBufSize, vPlane.buffer.capacity())
                     vPlane.buffer.limit(vCopy)
-                    val vb = ByteBuffer.allocateDirect(vCopy + SIMD_PAD).order(ByteOrder.nativeOrder())
+                    var vb = cachedVBuf
+                    if (vb == null || vb.capacity() < vCopy + SIMD_PAD) {
+                        vb = ByteBuffer.allocateDirect(vCopy + SIMD_PAD).order(ByteOrder.nativeOrder())
+                        cachedVBuf = vb
+                    }
+                    vb.clear()
                     vb.put(vPlane.buffer)
                     vb.flip()
                     vBuf = vb
@@ -234,7 +241,12 @@ class CameraController(private val context: Context) {
                     val rotDstUvStride = RowStride(h)
 
                     if (uvPixelStride == 1) {
-                        val rotVBuf = ByteBuffer.allocateDirect(rotUvSize + SIMD_PAD).order(ByteOrder.nativeOrder())
+                        var rotVBuf = cachedRotatedVBuf
+                        if (rotVBuf == null || rotVBuf.capacity() < rotUvSize + SIMD_PAD) {
+                            rotVBuf = ByteBuffer.allocateDirect(rotUvSize + SIMD_PAD).order(ByteOrder.nativeOrder())
+                            cachedRotatedVBuf = rotVBuf
+                        }
+                        rotVBuf.clear()
                         val rotI420UStride = RowStride(h / 2)
                         Yuv.rotateI420Rotate(
                             yBuf, RowStride(yRowStride), 0,

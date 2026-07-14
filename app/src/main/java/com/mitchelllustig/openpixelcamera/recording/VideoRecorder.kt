@@ -19,6 +19,7 @@ class VideoRecorder(private val context: Context) {
     private var pfd: android.os.ParcelFileDescriptor? = null
     private var videoUri: Uri? = null
     private var cachedSurface: Surface? = null
+    private var cachedRect: Rect? = null
 
     @Volatile
     var isRecording = false
@@ -80,8 +81,10 @@ class VideoRecorder(private val context: Context) {
         val surface = cachedSurface ?: return
         try {
             val canvas = surface.lockCanvas(null)
+            val rect = cachedRect?.takeIf { it.width() == canvas.width && it.height() == canvas.height }
+                ?: Rect(0, 0, canvas.width, canvas.height).also { cachedRect = it }
             canvas.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR)
-            canvas.drawBitmap(bitmap, null, Rect(0, 0, canvas.width, canvas.height), null)
+            canvas.drawBitmap(bitmap, null, rect, null)
             surface.unlockCanvasAndPost(canvas)
         } catch (_: Exception) {}
     }
@@ -100,6 +103,7 @@ class VideoRecorder(private val context: Context) {
         try { recorder?.release() } catch (_: Exception) {}
         recorder = null
         cachedSurface = null
+        cachedRect = null
         try { pfd?.close() } catch (_: Exception) {}
         pfd = null
         videoUri = null
