@@ -446,6 +446,23 @@ class CameraController(private val context: Context) {
 
     fun updateIso(iso: Int) {
         currentIso = iso
+        applyPreviewSettings()
+    }
+
+    fun updateFps(fps: Int) {
+        userFps = fps
+        targetFpsRange = Range(fps, fps)
+        actualExposureNanos = (1_000_000_000L / fps).coerceIn(exposureRange.lower, exposureRange.upper)
+        applyPreviewSettings()
+    }
+
+    fun setTorchEnabled(enabled: Boolean) {
+        if (!torchSupported) return
+        torchEnabled = enabled
+        applyPreviewSettings()
+    }
+
+    private fun applyPreviewSettings() {
         val session = captureSession ?: return
         val camera = cameraDevice ?: return
         val surface = imageReader?.surface ?: return
@@ -456,7 +473,7 @@ class CameraController(private val context: Context) {
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
                 set(CaptureRequest.SENSOR_EXPOSURE_TIME, actualExposureNanos)
-                set(CaptureRequest.SENSOR_SENSITIVITY, iso)
+                set(CaptureRequest.SENSOR_SENSITIVITY, currentIso)
                 set(CaptureRequest.SENSOR_FRAME_DURATION, actualExposureNanos)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, targetFpsRange)
                 if (torchSupported) {
@@ -465,20 +482,7 @@ class CameraController(private val context: Context) {
             }
 
             session.setRepeatingRequest(request.build(), null, backgroundHandler)
-        } catch (_: IllegalStateException) {}
-    }
-
-    fun updateFps(fps: Int) {
-        userFps = fps
-        targetFpsRange = Range(fps, fps)
-        actualExposureNanos = (1_000_000_000L / fps).coerceIn(exposureRange.lower, exposureRange.upper)
-        updateIso(currentIso)
-    }
-
-    fun setTorchEnabled(enabled: Boolean) {
-        if (!torchSupported) return
-        torchEnabled = enabled
-        updateIso(currentIso)
+        } catch (_: Exception) {}
     }
 
     private fun createPreviewSession(
@@ -494,7 +498,7 @@ class CameraController(private val context: Context) {
                 object : CameraCaptureSession.StateCallback() {
                     override fun onConfigured(session: CameraCaptureSession) {
                         captureSession = session
-                        startPreview(session, iso)
+                        applyPreviewSettings()
                         opening = false
                         onReady(surface)
                     }
@@ -508,32 +512,6 @@ class CameraController(private val context: Context) {
             )
         } catch (_: IllegalStateException) {
             opening = false
-        }
-    }
-
-    private fun startPreview(session: CameraCaptureSession, iso: Int) {
-        val camera = cameraDevice ?: return
-        val surface = imageReader?.surface ?: return
-
-        Log.i(TAG, "Starting preview: exposure=${actualExposureNanos}ns (${actualExposureNanos / 1_000_000.0}ms), fps=$targetFpsRange, iso=$iso")
-
-        try {
-            val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                addTarget(surface)
-                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-                set(CaptureRequest.SENSOR_EXPOSURE_TIME, actualExposureNanos)
-                set(CaptureRequest.SENSOR_SENSITIVITY, iso)
-                set(CaptureRequest.SENSOR_FRAME_DURATION, actualExposureNanos)
-                set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, targetFpsRange)
-                if (torchSupported) {
-                    set(CaptureRequest.FLASH_MODE, if (torchEnabled) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
-                }
-            }
-
-            session.setRepeatingRequest(request.build(), null, backgroundHandler)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start preview: ${e.message}")
         }
     }
 
