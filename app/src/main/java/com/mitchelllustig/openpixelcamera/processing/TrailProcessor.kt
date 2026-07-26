@@ -4,6 +4,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import java.nio.ByteBuffer
+import kotlin.math.floor
+
+enum class ColorOverrideMode { OFF, COLOR, WHITE, FADE }
 
 class TrailProcessor {
 
@@ -36,6 +39,12 @@ class TrailProcessor {
 
     var fadePercent: Float = 0.25f
         set(value) { field = value.coerceIn(0f, 1f) }
+
+    var colorOverrideMode: ColorOverrideMode = ColorOverrideMode.OFF
+    var solidColor: Int = 0xFFFFFFFF.toInt()
+
+    private var fadeStartTimeNanos: Long = 0L
+    private val fadeDurationNanos = 10_000_000_000L
 
     private fun ensureDerived() {
         if (threshold == cachedThreshold && trailLength == cachedTrailLen && fadePercent == cachedFadePct) return
@@ -105,15 +114,36 @@ class TrailProcessor {
                     if (newAge > fadeStart) {
                         val tp = tPix[i]
                         val ta = (tp shr 24) and 0xFF
-                        val tr = (tp shr 16) and 0xFF
-                        val tg = (tp shr 8) and 0xFF
-                        val tb = tp and 0xFF
                         val remaining = tLen - age + 1
                         val na = (ta * (remaining - 1) + remaining / 2) / remaining
-                        tPix[i] = (na shl 24) or (tr shl 16) or (tg shl 8) or tb
+                        tPix[i] = (na shl 24) or (tp and 0x00FFFFFF)
                     }
                 }
             }
+        }
+
+        if (colorOverrideMode != ColorOverrideMode.OFF) {
+            val overrideRgb = when (colorOverrideMode) {
+                ColorOverrideMode.COLOR -> solidColor
+                ColorOverrideMode.WHITE -> 0xFFFFFFFF.toInt()
+                ColorOverrideMode.FADE -> {
+                    if (fadeStartTimeNanos == 0L) fadeStartTimeNanos = System.nanoTime()
+                    val elapsed = System.nanoTime() - fadeStartTimeNanos
+                    val hue = (elapsed.toFloat() / fadeDurationNanos * 360f) % 360f
+                    hsvToArgb(hue, 1f, 1f)
+                }
+                else -> 0
+            }
+            val overrideR = (overrideRgb shr 16) and 0xFF
+            val overrideG = (overrideRgb shr 8) and 0xFF
+            val overrideB = overrideRgb and 0xFF
+            for (i in 0 until size) {
+                if (tAge[i] == 1.toShort()) {
+                    tPix[i] = (0xFF shl 24) or (overrideR shl 16) or (overrideG shl 8) or overrideB
+                }
+            }
+        } else {
+            fadeStartTimeNanos = 0L
         }
 
         trailBitmap!!.setPixels(tPix, 0, width, 0, 0, width, height)
@@ -147,5 +177,26 @@ class TrailProcessor {
         cachedIntView = null
         currentWidth = 0
         currentHeight = 0
+        fadeStartTimeNanos = 0L
+    }
+
+    companion object {
+        private fun hsvToArgb(hue: Float, saturation: Float, value: Float): Int {
+            val h = ((hue / 60f) % 6f).coerceIn(0f, 6f)
+            val f = h - floor(h)
+            val p = (value * (1f - saturation) * 255f).toInt()
+            val q = (value * (1f - f * saturation) * 255f).toInt()
+            val t = (value * (1f - (1f - f) * saturation) * 255f).toInt()
+            val v = (value * 255f).toInt()
+            val (r, g, b) = when (h.toInt()) {
+                0 -> Triple(v, t, p)
+                1 -> Triple(q, v, p)
+                2 -> Triple(p, v, t)
+                3 -> Triple(p, q, v)
+                4 -> Triple(t, p, v)
+                else -> Triple(v, p, q)
+            }
+            return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
     }
 }

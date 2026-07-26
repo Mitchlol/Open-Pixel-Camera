@@ -81,6 +81,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.mitchelllustig.openpixelcamera.R
 import com.mitchelllustig.openpixelcamera.camera.CameraController
 import com.mitchelllustig.openpixelcamera.processing.TrailProcessor
+import com.mitchelllustig.openpixelcamera.processing.ColorOverrideMode
 import com.mitchelllustig.openpixelcamera.recording.VideoRecorder
 import android.graphics.Canvas as AwtCanvas
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -94,6 +95,8 @@ private const val KEY_FPS = "fps"
 private const val KEY_RESOLUTION_INDEX = "resolution_index"
 private const val KEY_AUDIO_ENABLED = "audio_enabled"
 private const val KEY_FADE_PERCENT = "fade_percent"
+private const val KEY_COLOR_OVERRIDE_MODE = "color_override_mode"
+private const val KEY_SOLID_COLOR_HUE = "solid_color_hue"
 private const val KEY_HIDE_BANNER = "hide_banner"
 
 @Composable
@@ -126,6 +129,8 @@ fun CameraScreen() {
     var cameraRestartNonce by remember { mutableIntStateOf(0) }
     var audioEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_AUDIO_ENABLED, true)) }
     var fadePercent by remember { mutableFloatStateOf(prefs.getFloat(KEY_FADE_PERCENT, 25f)) }
+    var colorOverrideModeIndex by remember { mutableIntStateOf(prefs.getInt(KEY_COLOR_OVERRIDE_MODE, 0)) }
+    var solidColorHue by remember { mutableFloatStateOf(prefs.getFloat(KEY_SOLID_COLOR_HUE, 0f)) }
     var hideBanner by remember { mutableStateOf(prefs.getBoolean(KEY_HIDE_BANNER, false)) }
     var settingsRestored by remember { mutableStateOf(false) }
 
@@ -268,6 +273,18 @@ fun CameraScreen() {
     LaunchedEffect(fadePercent) {
         trailProcessor.fadePercent = fadePercent / 100f
         prefs.edit().putFloat(KEY_FADE_PERCENT, fadePercent).apply()
+    }
+
+    LaunchedEffect(colorOverrideModeIndex) {
+        trailProcessor.colorOverrideMode = ColorOverrideMode.entries[colorOverrideModeIndex]
+        prefs.edit().putInt(KEY_COLOR_OVERRIDE_MODE, colorOverrideModeIndex).apply()
+    }
+
+    LaunchedEffect(solidColorHue, colorOverrideModeIndex) {
+        if (colorOverrideModeIndex == 1) {
+            trailProcessor.solidColor = hsvToArgb(solidColorHue, 1f, 1f)
+        }
+        prefs.edit().putFloat(KEY_SOLID_COLOR_HUE, solidColorHue).apply()
     }
 
     LaunchedEffect(fpsSelectedIndex) {
@@ -436,46 +453,162 @@ fun CameraScreen() {
                     .align(Alignment.BottomCenter)
             ) {
                 if (showCameraPanel) {
-                    SettingsPanel(
-                        title = "Light Trail Settings",
-                        enabled = !isRecording,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        onClose = { showCameraPanel = false }
+                    var cameraTab by remember { mutableIntStateOf(0) }
+                    Card(
+                        modifier = Modifier
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.85f)),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
                     ) {
-                        ControlSlider(
-                            label = "Camera Brightness (ISO)",
-                            value = isoPosition,
-                            onValueChange = { isoPosition = it },
-                            valueRange = 0f..100f,
-                            displayValue = null,
-                            steps = 0
-                        )
-                        ControlSlider(
-                            label = "Trail Sensitivity",
-                            value = threshold,
-                            onValueChange = { threshold = it },
-                            valueRange = 0f..75f,
-                            steps = 0
-                        )
-                        ControlSlider(
-                            label = "Trail Length",
-                            value = trailLengthPos,
-                            onValueChange = {
-                                trailLengthPos = it
-                                val t = it / 100.0
-                                val duration = t * t * 5.0
-                                trailLength = (duration * currentFps).toInt().coerceAtLeast(0)
-                            },
-                            valueRange = 0f..100f,
-                            steps = 0
-                        )
-                        ControlSlider(
-                            label = "Fade",
-                            value = fadePercent,
-                            onValueChange = { fadePercent = it },
-                            valueRange = 0f..100f,
-                            steps = 0
-                        )
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Light Trail Settings",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(CircleShape)
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) { showCameraPanel = false },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Canvas(modifier = Modifier.size(12.dp)) {
+                                        drawLine(Color.White, Offset(0f, 0f), Offset(size.width, size.height), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+                                        drawLine(Color.White, Offset(size.width, 0f), Offset(0f, size.height), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                listOf("Settings", "Effects").forEachIndexed { index, label ->
+                                    val active = cameraTab == index
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (active) Color.White else Color.White.copy(alpha = 0.15f))
+                                            .clickable { cameraTab = index }
+                                            .padding(vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            color = if (active) Color.Black else Color.White.copy(alpha = 0.7f),
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            if (cameraTab == 0) {
+                                ControlSlider(
+                                    label = "Camera Brightness (ISO)",
+                                    value = isoPosition,
+                                    onValueChange = { isoPosition = it },
+                                    valueRange = 0f..100f,
+                                    displayValue = null,
+                                    steps = 0
+                                )
+                                ControlSlider(
+                                    label = "Trail Sensitivity",
+                                    value = threshold,
+                                    onValueChange = { threshold = it },
+                                    valueRange = 0f..75f,
+                                    steps = 0
+                                )
+                                ControlSlider(
+                                    label = "Trail Length",
+                                    value = trailLengthPos,
+                                    onValueChange = {
+                                        trailLengthPos = it
+                                        val t = it / 100.0
+                                        val duration = t * t * 5.0
+                                        trailLength = (duration * currentFps).toInt().coerceAtLeast(0)
+                                    },
+                                    valueRange = 0f..100f,
+                                    steps = 0
+                                )
+                            } else {
+                                ControlSlider(
+                                    label = "Fade",
+                                    value = fadePercent,
+                                    onValueChange = { fadePercent = it },
+                                    valueRange = 0f..100f,
+                                    steps = 0
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Color Override",
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    listOf("Off", "Color", "White", "Fade").forEachIndexed { index, label ->
+                                        val active = colorOverrideModeIndex == index
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(if (active) Color.White else Color.White.copy(alpha = 0.15f))
+                                                .clickable { colorOverrideModeIndex = index }
+                                                .padding(vertical = 6.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = label,
+                                                color = if (active) Color.Black else Color.White.copy(alpha = 0.7f),
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                        }
+                                    }
+                                }
+                                if (colorOverrideModeIndex == 1) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    ControlSlider(
+                                        label = "Color",
+                                        value = solidColorHue,
+                                        onValueChange = { solidColorHue = it },
+                                        valueRange = 0f..360f,
+                                        displayValue = null,
+                                        steps = 0
+                                    )
+                                    Canvas(modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(8.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                    ) {
+                                        val colors = (0..size.width.toInt()).map { i ->
+                                            hsvToArgb(i.toFloat() / size.width * 360f, 1f, 1f)
+                                        }
+                                        drawRect(Color.Transparent)
+                                        for (i in 0 until colors.size - 1) {
+                                            drawRect(
+                                                color = Color(colors[i]),
+                                                topLeft = Offset(i.toFloat(), 0f),
+                                                size = Size(2f, size.height)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -942,4 +1075,22 @@ private fun ControlSlider(
             )
         )
     }
+}
+
+private fun hsvToArgb(hue: Float, saturation: Float, value: Float): Int {
+    val h = ((hue / 60f) % 6f).coerceIn(0f, 6f)
+    val f = h - kotlin.math.floor(h)
+    val p = (value * (1f - saturation) * 255f).toInt()
+    val q = (value * (1f - f * saturation) * 255f).toInt()
+    val t = (value * (1f - (1f - f) * saturation) * 255f).toInt()
+    val v = (value * 255f).toInt()
+    val (r, g, b) = when (h.toInt()) {
+        0 -> Triple(v, t, p)
+        1 -> Triple(q, v, p)
+        2 -> Triple(p, v, t)
+        3 -> Triple(p, q, v)
+        4 -> Triple(t, p, v)
+        else -> Triple(v, p, q)
+    }
+    return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
 }
