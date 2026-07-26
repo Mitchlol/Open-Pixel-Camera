@@ -373,7 +373,7 @@ fun CameraScreen() {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
+                    .align(Alignment.TopCenter)
             ) {
                 if(!hideBanner){
                     Row(
@@ -389,13 +389,11 @@ fun CameraScreen() {
                                     )
                                 )
                             },
-                        verticalAlignment = Alignment.CenterVertically,
-
-                        ) {
-                        // Icon on the left
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Image(
                             painter = painterResource(id = R.drawable.opp_logo),
-                            contentDescription = null, // Set to null if it's purely decorative
+                            contentDescription = null,
                             modifier = Modifier.size(40.dp).pointerInput(Unit) {
                                 detectTapGestures(
                                     onLongPress = {
@@ -404,11 +402,7 @@ fun CameraScreen() {
                                 )
                             }
                         )
-
-                        // Space between icon and text
                         Spacer(modifier = Modifier.width(16.dp))
-
-                        // Text on the right
                         Text(
                             text = annotatedText,
                             style = MaterialTheme.typography.titleMedium.copy(
@@ -416,11 +410,31 @@ fun CameraScreen() {
                             )
                         )
                     }
-
-                    Spacer(modifier = Modifier.weight(1f))
                 }
+                if (cameraController.torchSupported) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        PanelToggleButton(
+                            isActive = torchOn,
+                            onClick = {
+                                torchOn = !torchOn
+                                cameraController.setTorchEnabled(torchOn)
+                            },
+                            iconType = PanelIconType.TORCH
+                        )
+                    }
+                }
+            }
 
-
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+            ) {
                 if (showCameraPanel) {
                     SettingsPanel(
                         title = "Light Trail Settings",
@@ -620,16 +634,6 @@ fun CameraScreen() {
                                 onClick = { showOutputPanel = !showOutputPanel; if (showOutputPanel) showCameraPanel = false },
                                 iconType = PanelIconType.OUTPUT
                             )
-                            if (cameraController.torchSupported) {
-                                PanelToggleButton(
-                                    isActive = torchOn,
-                                    onClick = {
-                                        torchOn = !torchOn
-                                        cameraController.setTorchEnabled(torchOn)
-                                    },
-                                    iconType = PanelIconType.TORCH
-                                )
-                            }
                         }
                     }
                 }
