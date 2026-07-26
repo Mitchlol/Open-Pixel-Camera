@@ -99,12 +99,21 @@ fun CameraScreen() {
 
     var isoPosition by remember { mutableFloatStateOf(prefs.getFloat(KEY_ISO_POSITION, 25f)) }
     var threshold by remember { mutableFloatStateOf(prefs.getFloat(KEY_THRESHOLD, 25f)) }
+    var fpsOptions by remember { mutableStateOf<List<Int>>(emptyList()) }
+    var fpsSelectedIndex by remember { mutableIntStateOf(0) }
+    val currentFps = if (fpsOptions.isNotEmpty()) fpsOptions[fpsSelectedIndex] else 30
     var trailLength by remember { mutableIntStateOf(prefs.getInt(KEY_TRAIL_LENGTH, 8)) }
+    var trailLengthPos by remember {
+        mutableFloatStateOf(
+            run {
+                val duration = trailLength.toDouble() / currentFps
+                (kotlin.math.sqrt(duration.coerceAtLeast(0.0) / 5.0) * 100.0).toFloat().coerceIn(0f, 100f)
+            }
+        )
+    }
     var hasPermission by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var isoRange by remember { mutableStateOf(100f..6400f) }
-    var fpsOptions by remember { mutableStateOf<List<Int>>(emptyList()) }
-    var fpsSelectedIndex by remember { mutableIntStateOf(0) }
     var resolutionOptions by remember { mutableStateOf<List<Pair<Int, Int>>>(emptyList()) }
     var resolutionSelectedIndex by remember { mutableIntStateOf(0) }
     var currentResolution by remember { mutableStateOf(Pair(640, 360)) }
@@ -262,6 +271,9 @@ fun CameraScreen() {
         val fps = fpsOptions[fpsSelectedIndex]
         cameraController.updateFps(fps)
         prefs.edit().putInt(KEY_FPS, fps).apply()
+        val t = trailLengthPos / 100.0
+                                val duration = t * t * 5.0
+                                trailLength = (duration * fps).toInt().coerceAtLeast(0)
     }
 
     LaunchedEffect(resolutionSelectedIndex) {
@@ -413,6 +425,14 @@ fun CameraScreen() {
                         onClose = { showCameraPanel = false }
                     ) {
                         ControlSlider(
+                            label = "Camera Brightness (ISO)",
+                            value = isoPosition,
+                            onValueChange = { isoPosition = it },
+                            valueRange = 0f..100f,
+                            displayValue = null,
+                            steps = 0
+                        )
+                        ControlSlider(
                             label = "Trail Sensitivity",
                             value = threshold,
                             onValueChange = { threshold = it },
@@ -420,11 +440,16 @@ fun CameraScreen() {
                             steps = 0
                         )
                         ControlSlider(
-                            label = "Trail Length (Frames)",
-                            value = trailLength.toFloat(),
-                            onValueChange = { trailLength = it.toInt() },
-                            valueRange = 1f..20f,
-                            steps = 18
+                            label = "Trail Length",
+                            value = trailLengthPos,
+                            onValueChange = {
+                                trailLengthPos = it
+                                val t = it / 100.0
+                                val duration = t * t * 5.0
+                                trailLength = (duration * currentFps).toInt().coerceAtLeast(0)
+                            },
+                            valueRange = 0f..100f,
+                            steps = 0
                         )
                         ControlSlider(
                             label = "Fade",
@@ -447,14 +472,6 @@ fun CameraScreen() {
                             text = "Higher frame rates and resolutions may cause dropped frames on some devices. If the preview stutters or trails look choppy, try lowering these settings.",
                             color = Color.White.copy(alpha = 0.45f),
                             style = MaterialTheme.typography.bodySmall
-                        )
-                        ControlSlider(
-                            label = "Camera Brightness (ISO)",
-                            value = isoPosition,
-                            onValueChange = { isoPosition = it },
-                            valueRange = 0f..100f,
-                            displayValue = null,
-                            steps = 0
                         )
                         if (fpsOptions.size >= 2) {
                             var dragIndex by remember { mutableFloatStateOf(fpsSelectedIndex.toFloat()) }
@@ -517,7 +534,7 @@ fun CameraScreen() {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 16.dp, start = 16.dp, end = 16.dp)
+                        .padding(bottom = 16.dp)
                         .height(64.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {

@@ -12,7 +12,7 @@ class TrailProcessor {
 
     private var pixelBuf: IntArray? = null
     private var trailPixels: IntArray? = null
-    private var trailAge: ByteArray? = null
+    private var trailAge: ShortArray? = null
     private var trailBitmap: Bitmap? = null
     private var frameBitmap: Bitmap? = null
     private var outputBitmaps = arrayOfNulls<Bitmap>(2)
@@ -55,7 +55,7 @@ class TrailProcessor {
             val size = width * height
             pixelBuf = IntArray(size)
             trailPixels = IntArray(size)
-            trailAge = ByteArray(size)
+            trailAge = ShortArray(size)
             trailBitmap?.recycle()
             trailBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             frameBitmap?.recycle()
@@ -101,7 +101,7 @@ class TrailProcessor {
                     tAge[i] = 0
                     tPix[i] = Color.TRANSPARENT
                 } else {
-                    tAge[i] = newAge.toByte()
+                    tAge[i] = newAge.toShort()
                     if (newAge > fadeStart) {
                         val tp = tPix[i]
                         val ta = (tp shr 24) and 0xFF
