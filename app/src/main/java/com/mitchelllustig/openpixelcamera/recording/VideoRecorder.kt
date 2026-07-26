@@ -20,6 +20,13 @@ class VideoRecorder(private val context: Context) {
     private var videoUri: Uri? = null
     private var cachedSurface: Surface? = null
     private var cachedRect: Rect? = null
+    private var lastDrawnBitmap: Bitmap? = null
+
+    var lastFrame: Bitmap? = null
+        private set
+
+    var lastVideoUri: Uri? = null
+        private set
 
     @Volatile
     var isRecording = false
@@ -86,15 +93,25 @@ class VideoRecorder(private val context: Context) {
             canvas.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR)
             canvas.drawBitmap(bitmap, null, rect, null)
             surface.unlockCanvasAndPost(canvas)
+            lastDrawnBitmap = bitmap
         } catch (_: Exception) {}
     }
 
     fun stop() {
         if (!isRecording) return
         isRecording = false
+        lastVideoUri = videoUri
+        lastDrawnBitmap?.let {
+            lastFrame?.recycle()
+            lastFrame = Bitmap.createBitmap(it)
+        }
+        lastDrawnBitmap = null
         try { recorder?.stop() } catch (e: Exception) {
             e.printStackTrace()
             videoUri?.let { context.contentResolver.delete(it, null, null) }
+            lastVideoUri = null
+            lastFrame?.recycle()
+            lastFrame = null
         }
         release()
     }
@@ -104,6 +121,7 @@ class VideoRecorder(private val context: Context) {
         recorder = null
         cachedSurface = null
         cachedRect = null
+        lastDrawnBitmap = null
         try { pfd?.close() } catch (_: Exception) {}
         pfd = null
         videoUri = null
