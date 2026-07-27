@@ -557,6 +557,14 @@ fun CameraScreen() {
                                     steps = 0
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
+                                ControlSlider(
+                                    label = "Blur (Causes lag)",
+                                    value = blurAmount,
+                                    onValueChange = { blurAmount = it },
+                                    valueRange = 0f..100f,
+                                    steps = 0
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Color Override",
                                     color = Color.White.copy(alpha = 0.7f),
@@ -595,12 +603,15 @@ fun CameraScreen() {
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(24.dp)
-                                            .clip(RoundedCornerShape(12.dp))
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentAlignment = Alignment.Center
                                     ) {
-                                        Canvas(modifier = Modifier.matchParentSize()) {
+                                        Canvas(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(16.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                        ) {
                                             val colors = (0..size.width.toInt()).map { i ->
                                                 hsvToArgb(i.toFloat() / size.width * 360f, 1f, 1f)
                                             }
@@ -616,7 +627,7 @@ fun CameraScreen() {
                                             value = solidColorHue,
                                             onValueChange = { solidColorHue = it },
                                             valueRange = 0f..360f,
-                                            modifier = Modifier.matchParentSize(),
+                                            modifier = Modifier.fillMaxWidth(),
                                             colors = SliderDefaults.colors(
                                                 thumbColor = Color.White,
                                                 activeTrackColor = Color.Transparent,
@@ -625,14 +636,6 @@ fun CameraScreen() {
                                         )
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                ControlSlider(
-                                    label = "Blur",
-                                    value = blurAmount,
-                                    onValueChange = { blurAmount = it },
-                                    valueRange = 0f..100f,
-                                    steps = 0
-                                )
                             }
                         }
                     }
