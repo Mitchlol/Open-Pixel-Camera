@@ -97,6 +97,7 @@ private const val KEY_AUDIO_ENABLED = "audio_enabled"
 private const val KEY_FADE_PERCENT = "fade_percent"
 private const val KEY_COLOR_OVERRIDE_MODE = "color_override_mode"
 private const val KEY_SOLID_COLOR_HUE = "solid_color_hue"
+private const val KEY_BLUR_AMOUNT = "blur_amount"
 private const val KEY_HIDE_BANNER = "hide_banner"
 
 @Composable
@@ -131,6 +132,8 @@ fun CameraScreen() {
     var fadePercent by remember { mutableFloatStateOf(prefs.getFloat(KEY_FADE_PERCENT, 25f)) }
     var colorOverrideModeIndex by remember { mutableIntStateOf(prefs.getInt(KEY_COLOR_OVERRIDE_MODE, 0)) }
     var solidColorHue by remember { mutableFloatStateOf(prefs.getFloat(KEY_SOLID_COLOR_HUE, 0f)) }
+    var blurAmount by remember { mutableFloatStateOf(prefs.getFloat(KEY_BLUR_AMOUNT, 0f)) }
+    var cameraTab by remember { mutableIntStateOf(0) }
     var hideBanner by remember { mutableStateOf(prefs.getBoolean(KEY_HIDE_BANNER, false)) }
     var settingsRestored by remember { mutableStateOf(false) }
 
@@ -139,7 +142,7 @@ fun CameraScreen() {
             onActualResolutionChanged = { w, h -> currentResolution = Pair(w, h) }
         }
     }
-    val trailProcessor = remember { TrailProcessor() }
+    val trailProcessor = remember { TrailProcessor(context) }
     val videoRecorder = remember { VideoRecorder(context) }
     var isRecording by remember { mutableStateOf(false) }
     var recordingSeconds by remember { mutableIntStateOf(0) }
@@ -285,6 +288,11 @@ fun CameraScreen() {
             trailProcessor.solidColor = hsvToArgb(solidColorHue, 1f, 1f)
         }
         prefs.edit().putFloat(KEY_SOLID_COLOR_HUE, solidColorHue).apply()
+    }
+
+    LaunchedEffect(blurAmount) {
+        trailProcessor.blurAmount = blurAmount / 100f
+        prefs.edit().putFloat(KEY_BLUR_AMOUNT, blurAmount).apply()
     }
 
     LaunchedEffect(fpsSelectedIndex) {
@@ -453,7 +461,6 @@ fun CameraScreen() {
                     .align(Alignment.BottomCenter)
             ) {
                 if (showCameraPanel) {
-                    var cameraTab by remember { mutableIntStateOf(0) }
                     Card(
                         modifier = Modifier
                             .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -581,32 +588,51 @@ fun CameraScreen() {
                                 }
                                 if (colorOverrideModeIndex == 1) {
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    ControlSlider(
-                                        label = "Color",
-                                        value = solidColorHue,
-                                        onValueChange = { solidColorHue = it },
-                                        valueRange = 0f..360f,
-                                        displayValue = null,
-                                        steps = 0
+                                    Text(
+                                        text = "Color",
+                                        color = Color.White.copy(alpha = 0.7f),
+                                        style = MaterialTheme.typography.labelMedium
                                     )
-                                    Canvas(modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(8.dp)
-                                        .clip(RoundedCornerShape(4.dp))
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(24.dp)
+                                            .clip(RoundedCornerShape(12.dp))
                                     ) {
-                                        val colors = (0..size.width.toInt()).map { i ->
-                                            hsvToArgb(i.toFloat() / size.width * 360f, 1f, 1f)
+                                        Canvas(modifier = Modifier.matchParentSize()) {
+                                            val colors = (0..size.width.toInt()).map { i ->
+                                                hsvToArgb(i.toFloat() / size.width * 360f, 1f, 1f)
+                                            }
+                                            for (i in 0 until colors.size - 1) {
+                                                drawRect(
+                                                    color = Color(colors[i]),
+                                                    topLeft = Offset(i.toFloat(), 0f),
+                                                    size = Size(2f, size.height)
+                                                )
+                                            }
                                         }
-                                        drawRect(Color.Transparent)
-                                        for (i in 0 until colors.size - 1) {
-                                            drawRect(
-                                                color = Color(colors[i]),
-                                                topLeft = Offset(i.toFloat(), 0f),
-                                                size = Size(2f, size.height)
+                                        Slider(
+                                            value = solidColorHue,
+                                            onValueChange = { solidColorHue = it },
+                                            valueRange = 0f..360f,
+                                            modifier = Modifier.matchParentSize(),
+                                            colors = SliderDefaults.colors(
+                                                thumbColor = Color.White,
+                                                activeTrackColor = Color.Transparent,
+                                                inactiveTrackColor = Color.Transparent
                                             )
-                                        }
+                                        )
                                     }
                                 }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                ControlSlider(
+                                    label = "Blur",
+                                    value = blurAmount,
+                                    onValueChange = { blurAmount = it },
+                                    valueRange = 0f..100f,
+                                    steps = 0
+                                )
                             }
                         }
                     }
