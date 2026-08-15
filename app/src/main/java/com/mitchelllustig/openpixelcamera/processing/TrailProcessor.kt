@@ -21,6 +21,7 @@ class TrailProcessor(private val context: Context) {
 
     private var pixelBuf: IntArray? = null
     private var trailPixels: IntArray? = null
+    private var trailDisplay: IntArray? = null
     private var trailAge: ShortArray? = null
     private var trailBitmap: Bitmap? = null
     private var frameBitmap: Bitmap? = null
@@ -59,6 +60,8 @@ class TrailProcessor(private val context: Context) {
 
     var rotationalSymmetry: Int = 0
         set(value) { field = value.coerceAtLeast(0) }
+
+    var shimmerEnabled: Boolean = false
 
     private var cachedRotSymmetry = 0
     private var cachedRotWidth = 0
@@ -122,6 +125,7 @@ class TrailProcessor(private val context: Context) {
             val size = width * height
             pixelBuf = IntArray(size)
             trailPixels = IntArray(size)
+            trailDisplay = IntArray(size)
             trailAge = ShortArray(size)
             trailBitmap?.recycle()
             trailBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -261,17 +265,24 @@ class TrailProcessor(private val context: Context) {
 
         frameBitmap!!.setPixels(pBuf, 0, width, 0, 0, width, height)
 
+        val trailSrc = if (shimmerEnabled) {
+            buildShimmerPixels(size)
+            trailDisplay!!
+        } else {
+            tPix
+        }
+
         val trailSource: Bitmap
         if (blurAmount > 0f) {
             ensureBlurAlloc(width, height)
-            trailBitmap!!.setPixels(tPix, 0, width, 0, 0, width, height)
+            trailBitmap!!.setPixels(trailSrc, 0, width, 0, 0, width, height)
             blurScript!!.setRadius((blurAmount * 25f).coerceIn(0.1f, 25f))
             blurScript!!.setInput(blurInputAlloc)
             blurScript!!.forEach(blurOutputAlloc)
             blurOutputAlloc!!.copyTo(trailBitmap!!)
             trailSource = trailBitmap!!
         } else {
-            trailBitmap!!.setPixels(tPix, 0, width, 0, 0, width, height)
+            trailBitmap!!.setPixels(trailSrc, 0, width, 0, 0, width, height)
             trailSource = trailBitmap!!
         }
 
@@ -282,6 +293,15 @@ class TrailProcessor(private val context: Context) {
         canvas.drawBitmap(trailSource, 0f, 0f, null)
 
         return outputBitmaps[idx]!!
+    }
+
+    private fun buildShimmerPixels(size: Int) {
+        val disp = trailDisplay!!
+        val tPix = trailPixels!!
+        val tAge = trailAge!!
+        for (i in 0 until size) {
+            disp[i] = if ((tAge[i].toInt() % 3) == 0) Color.TRANSPARENT else tPix[i]
+        }
     }
 
     private fun ensureBlurAlloc(width: Int, height: Int) {
@@ -313,6 +333,7 @@ class TrailProcessor(private val context: Context) {
         frameBitmap = null
         pixelBuf = null
         trailPixels = null
+        trailDisplay = null
         trailAge = null
         cachedSrcBuf = null
         cachedIntView = null

@@ -101,6 +101,7 @@ private const val KEY_BLUR_AMOUNT = "blur_amount"
 private const val KEY_MIRROR_HORIZONTAL = "mirror_horizontal"
 private const val KEY_MIRROR_VERTICAL = "mirror_vertical"
 private const val KEY_ROTATION_SYMMETRY = "rotation_symmetry"
+private const val KEY_SHIMMER = "shimmer"
 private const val KEY_HIDE_BANNER = "hide_banner"
 
 private val rotationSymmetryOptions = listOf(0, 3, 5, 6)
@@ -141,6 +142,7 @@ fun CameraScreen() {
     var mirrorHorizontal by remember { mutableStateOf(prefs.getBoolean(KEY_MIRROR_HORIZONTAL, false)) }
     var mirrorVertical by remember { mutableStateOf(prefs.getBoolean(KEY_MIRROR_VERTICAL, false)) }
     var rotationalSymmetry by remember { mutableIntStateOf(prefs.getInt(KEY_ROTATION_SYMMETRY, 0)) }
+    var shimmerEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_SHIMMER, false)) }
     var cameraTab by remember { mutableIntStateOf(0) }
     var hideBanner by remember { mutableStateOf(prefs.getBoolean(KEY_HIDE_BANNER, false)) }
     var settingsRestored by remember { mutableStateOf(false) }
@@ -316,6 +318,11 @@ fun CameraScreen() {
     LaunchedEffect(rotationalSymmetry) {
         trailProcessor.rotationalSymmetry = rotationalSymmetry
         prefs.edit().putInt(KEY_ROTATION_SYMMETRY, rotationalSymmetry).apply()
+    }
+
+    LaunchedEffect(shimmerEnabled) {
+        trailProcessor.shimmerEnabled = shimmerEnabled
+        prefs.edit().putBoolean(KEY_SHIMMER, shimmerEnabled).apply()
     }
 
     LaunchedEffect(fpsSelectedIndex) {
@@ -701,6 +708,12 @@ fun CameraScreen() {
                                     onValueChangeFinished = {
                                         rotationalSymmetry = rotationSymmetryOptions[rotIndex.toInt()]
                                     }
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                CheckboxRow(
+                                    label = "Shimmer",
+                                    checked = shimmerEnabled,
+                                    onCheckedChange = { shimmerEnabled = it }
                                 )
                             }
                         }
