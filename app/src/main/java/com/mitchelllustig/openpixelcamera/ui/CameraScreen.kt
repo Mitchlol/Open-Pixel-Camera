@@ -378,7 +378,6 @@ fun CameraScreen() {
             CameraPreview(
                 cameraController = cameraController,
                 trailProcessor = trailProcessor,
-                thresholdPreview = thresholdPreview,
                 cameraActive = cameraActive,
                 videoRecorder = videoRecorder,
                 captureWidth = currentResolution.first,
@@ -939,7 +938,6 @@ private fun RecordButton(
 private fun CameraPreview(
     cameraController: CameraController,
     trailProcessor: TrailProcessor,
-    thresholdPreview: Boolean,
     cameraActive: Boolean,
     videoRecorder: VideoRecorder,
     captureWidth: Int,
@@ -1016,8 +1014,7 @@ private fun CameraPreview(
                         if (canvas != null) {
                             try {
                                 canvas.drawBitmap(processed, 0f, 0f, null)
-                                val overlay = trailProcessor.thresholdPreview
-                                if (thresholdPreview && overlay != null) {
+                                trailProcessor.thresholdPreview?.let { overlay ->
                                     canvas.drawBitmap(overlay, 0f, 0f, null)
                                 }
                             } finally {
