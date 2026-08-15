@@ -21,7 +21,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -143,7 +142,7 @@ fun CameraScreen() {
     var mirrorVertical by remember { mutableStateOf(prefs.getBoolean(KEY_MIRROR_VERTICAL, false)) }
     var rotationalSymmetry by remember { mutableIntStateOf(prefs.getInt(KEY_ROTATION_SYMMETRY, 0)) }
     var shimmerEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_SHIMMER, false)) }
-    var cameraTab by remember { mutableIntStateOf(0) }
+    var settingsTab by remember { mutableIntStateOf(0) }
     var hideBanner by remember { mutableStateOf(prefs.getBoolean(KEY_HIDE_BANNER, false)) }
     var settingsRestored by remember { mutableStateOf(false) }
 
@@ -355,8 +354,7 @@ fun CameraScreen() {
         }
     }
 
-    var showCameraPanel by remember { mutableStateOf(false) }
-    var showOutputPanel by remember { mutableStateOf(false) }
+    var showSettingsPanel by remember { mutableStateOf(false) }
     var torchOn by remember { mutableStateOf(false) }
 
     Box(
@@ -466,36 +464,12 @@ fun CameraScreen() {
                         )
                     }
                 }
-                if (cameraController.torchSupported) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(8.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        PanelToggleButton(
-                            isActive = torchOn,
-                            onClick = {
-                                torchOn = !torchOn
-                                cameraController.setTorchEnabled(torchOn)
-                            },
-                            iconType = PanelIconType.TORCH
-                        )
-                    }
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-            ) {
-                if (showCameraPanel) {
+                if (showSettingsPanel) {
                     Card(
                         modifier = Modifier
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                             .fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.85f)),
+                        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.5f)),
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
@@ -505,7 +479,7 @@ fun CameraScreen() {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Light Trail Settings",
+                                    text = "Settings",
                                     color = Color.White,
                                     style = MaterialTheme.typography.labelLarge
                                 )
@@ -516,7 +490,7 @@ fun CameraScreen() {
                                         .clickable(
                                             interactionSource = remember { MutableInteractionSource() },
                                             indication = null
-                                        ) { showCameraPanel = false },
+                                        ) { showSettingsPanel = false },
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Canvas(modifier = Modifier.size(12.dp)) {
@@ -530,14 +504,14 @@ fun CameraScreen() {
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                listOf("Settings", "Effects").forEachIndexed { index, label ->
-                                    val active = cameraTab == index
+                                listOf("Trails", "Effects", "Camera").forEachIndexed { index, label ->
+                                    val active = settingsTab == index
                                     Box(
                                         modifier = Modifier
                                             .weight(1f)
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(if (active) Color.White else Color.White.copy(alpha = 0.15f))
-                                            .clickable { cameraTab = index }
+                                            .clickable { settingsTab = index }
                                             .padding(vertical = 8.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
@@ -550,7 +524,7 @@ fun CameraScreen() {
                                 }
                             }
                             Spacer(modifier = Modifier.height(12.dp))
-                            if (cameraTab == 0) {
+                            if (settingsTab == 0) {
                                 ControlSlider(
                                     label = "Camera Brightness (ISO)",
                                     value = isoPosition,
@@ -578,7 +552,7 @@ fun CameraScreen() {
                                     valueRange = 0f..100f,
                                     steps = 0
                                 )
-                            } else {
+                            } else if (settingsTab == 1) {
                                 ControlSlider(
                                     label = "Fade",
                                     value = fadePercent,
@@ -715,81 +689,80 @@ fun CameraScreen() {
                                     checked = shimmerEnabled,
                                     onCheckedChange = { shimmerEnabled = it }
                                 )
+                            } else {
+                                Text(
+                                    text = "Higher frame rates and resolutions may cause dropped frames on some devices. If the preview stutters or trails look choppy, try lowering these settings.",
+                                    color = Color.White.copy(alpha = 0.45f),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                if (fpsOptions.size >= 2) {
+                                    var dragIndex by remember { mutableFloatStateOf(fpsSelectedIndex.toFloat()) }
+                                    LaunchedEffect(fpsSelectedIndex) { dragIndex = fpsSelectedIndex.toFloat() }
+                                    ControlSlider(
+                                        label = "Frame Rate (FPS)",
+                                        value = dragIndex,
+                                        onValueChange = { dragIndex = Math.round(it).toFloat().coerceIn(0f, (fpsOptions.size - 1).toFloat()) },
+                                        valueRange = 0f..(fpsOptions.size - 1).toFloat(),
+                                        steps = fpsOptions.size - 2,
+                                        displayValue = "${fpsOptions[dragIndex.toInt()]}",
+                                        enabled = !isRecording,
+                                        onValueChangeFinished = { fpsSelectedIndex = dragIndex.toInt() }
+                                    )
+                                }
+                                if (resolutionOptions.size >= 2) {
+                                    var dragIndex by remember { mutableFloatStateOf(resolutionSelectedIndex.toFloat()) }
+                                    LaunchedEffect(resolutionSelectedIndex) { dragIndex = resolutionSelectedIndex.toFloat() }
+                                    val (w, h) = resolutionOptions[dragIndex.toInt().coerceIn(0, resolutionOptions.size - 1)]
+                                    ControlSlider(
+                                        label = "Resolution",
+                                        value = dragIndex,
+                                        onValueChange = { dragIndex = Math.round(it).toFloat().coerceIn(0f, (resolutionOptions.size - 1).toFloat()) },
+                                        valueRange = 0f..(resolutionOptions.size - 1).toFloat(),
+                                        steps = resolutionOptions.size - 2,
+                                        displayValue = "${w}×${h}",
+                                        enabled = !isRecording,
+                                        onValueChangeFinished = { resolutionSelectedIndex = dragIndex.toInt() }
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) { audioEnabled = !audioEnabled },
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = audioEnabled,
+                                        onCheckedChange = { audioEnabled = it },
+                                        enabled = !isRecording,
+                                        colors = CheckboxDefaults.colors(
+                                            checkedColor = Color.White,
+                                            uncheckedColor = Color.White.copy(alpha = 0.6f),
+                                            checkmarkColor = Color.Black
+                                        )
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Record Audio",
+                                        color = Color.White.copy(alpha = if (isRecording) 0.5f else 0.9f),
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
                             }
                         }
                     }
                 }
+            }
 
-                if (showOutputPanel) {
-                    SettingsPanel(
-                        title = "Camera Settings",
-                        enabled = !isRecording,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        onClose = { showOutputPanel = false }
-                    ) {
-                        Text(
-                            text = "Higher frame rates and resolutions may cause dropped frames on some devices. If the preview stutters or trails look choppy, try lowering these settings.",
-                            color = Color.White.copy(alpha = 0.45f),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        if (fpsOptions.size >= 2) {
-                            var dragIndex by remember { mutableFloatStateOf(fpsSelectedIndex.toFloat()) }
-                            LaunchedEffect(fpsSelectedIndex) { dragIndex = fpsSelectedIndex.toFloat() }
-                            ControlSlider(
-                                label = "Frame Rate (FPS)",
-                                value = dragIndex,
-                                onValueChange = { dragIndex = Math.round(it).toFloat().coerceIn(0f, (fpsOptions.size - 1).toFloat()) },
-                                valueRange = 0f..(fpsOptions.size - 1).toFloat(),
-                                steps = fpsOptions.size - 2,
-                                displayValue = "${fpsOptions[dragIndex.toInt()]}",
-                                enabled = !isRecording,
-                                onValueChangeFinished = { fpsSelectedIndex = dragIndex.toInt() }
-                            )
-                        }
-                        if (resolutionOptions.size >= 2) {
-                            var dragIndex by remember { mutableFloatStateOf(resolutionSelectedIndex.toFloat()) }
-                            LaunchedEffect(resolutionSelectedIndex) { dragIndex = resolutionSelectedIndex.toFloat() }
-                            val (w, h) = resolutionOptions[dragIndex.toInt().coerceIn(0, resolutionOptions.size - 1)]
-                            ControlSlider(
-                                label = "Resolution",
-                                value = dragIndex,
-                                onValueChange = { dragIndex = Math.round(it).toFloat().coerceIn(0f, (resolutionOptions.size - 1).toFloat()) },
-                                valueRange = 0f..(resolutionOptions.size - 1).toFloat(),
-                                steps = resolutionOptions.size - 2,
-                                displayValue = "${w}×${h}",
-                                enabled = !isRecording,
-                                onValueChangeFinished = { resolutionSelectedIndex = dragIndex.toInt() }
-                            )
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
-                                ) { audioEnabled = !audioEnabled },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Checkbox(
-                                checked = audioEnabled,
-                                onCheckedChange = { audioEnabled = it },
-                                enabled = !isRecording,
-                                colors = CheckboxDefaults.colors(
-                                    checkedColor = Color.White,
-                                    uncheckedColor = Color.White.copy(alpha = 0.6f),
-                                    checkmarkColor = Color.Black
-                                )
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Record Audio",
-                                color = Color.White.copy(alpha = if (isRecording) 0.5f else 0.9f),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
-                }
-
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -866,13 +839,16 @@ fun CameraScreen() {
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             PanelToggleButton(
-                                isActive = showCameraPanel,
-                                onClick = { showCameraPanel = !showCameraPanel; if (showCameraPanel) showOutputPanel = false },
-                                iconType = PanelIconType.CAMERA
+                                isActive = torchOn,
+                                onClick = {
+                                    torchOn = !torchOn
+                                    cameraController.setTorchEnabled(torchOn)
+                                },
+                                iconType = PanelIconType.TORCH
                             )
                             PanelToggleButton(
-                                isActive = showOutputPanel,
-                                onClick = { showOutputPanel = !showOutputPanel; if (showOutputPanel) showCameraPanel = false },
+                                isActive = showSettingsPanel,
+                                onClick = { showSettingsPanel = !showSettingsPanel },
                                 iconType = PanelIconType.OUTPUT
                             )
                         }
@@ -1054,7 +1030,7 @@ private fun CameraPreview(
     }
 }
 
-private enum class PanelIconType { CAMERA, OUTPUT, TORCH }
+private enum class PanelIconType { OUTPUT, TORCH }
 
 @Composable
 private fun PanelToggleButton(
@@ -1064,7 +1040,6 @@ private fun PanelToggleButton(
     modifier: Modifier = Modifier
 ) {
     val iconRes = when (iconType) {
-        PanelIconType.CAMERA -> R.drawable.ic_gesture
         PanelIconType.OUTPUT -> R.drawable.ic_settings
         PanelIconType.TORCH -> R.drawable.ic_flashlight
     }
@@ -1088,56 +1063,6 @@ private fun PanelToggleButton(
             tint = Color.White.copy(alpha = if (isActive) 1f else 0.8f),
             modifier = Modifier.size(20.dp)
         )
-    }
-}
-
-@Composable
-private fun SettingsPanel(
-    title: String,
-    enabled: Boolean = true,
-    modifier: Modifier = Modifier,
-    onClose: () -> Unit,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = Color.Black.copy(alpha = 0.6f)
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = title,
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelLarge
-                )
-                Box(
-                    modifier = Modifier
-                        .size(24.dp)
-                        .clip(CircleShape)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { onClose() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Canvas(modifier = Modifier.size(12.dp)) {
-                        val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
-                        drawLine(Color.White, Offset(0f, 0f), Offset(size.width, size.height), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
-                        drawLine(Color.White, Offset(size.width, 0f), Offset(0f, size.height), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
-                    }
-                }
-            }
-            content()
-        }
     }
 }
 
