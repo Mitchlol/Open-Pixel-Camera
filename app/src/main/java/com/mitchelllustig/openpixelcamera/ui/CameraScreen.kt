@@ -100,7 +100,10 @@ private const val KEY_SOLID_COLOR_HUE = "solid_color_hue"
 private const val KEY_BLUR_AMOUNT = "blur_amount"
 private const val KEY_MIRROR_HORIZONTAL = "mirror_horizontal"
 private const val KEY_MIRROR_VERTICAL = "mirror_vertical"
+private const val KEY_ROTATION_SYMMETRY = "rotation_symmetry"
 private const val KEY_HIDE_BANNER = "hide_banner"
+
+private val rotationSymmetryOptions = listOf(0, 3, 5, 6)
 
 @Composable
 fun CameraScreen() {
@@ -137,6 +140,7 @@ fun CameraScreen() {
     var blurAmount by remember { mutableFloatStateOf(prefs.getFloat(KEY_BLUR_AMOUNT, 0f)) }
     var mirrorHorizontal by remember { mutableStateOf(prefs.getBoolean(KEY_MIRROR_HORIZONTAL, false)) }
     var mirrorVertical by remember { mutableStateOf(prefs.getBoolean(KEY_MIRROR_VERTICAL, false)) }
+    var rotationalSymmetry by remember { mutableIntStateOf(prefs.getInt(KEY_ROTATION_SYMMETRY, 0)) }
     var cameraTab by remember { mutableIntStateOf(0) }
     var hideBanner by remember { mutableStateOf(prefs.getBoolean(KEY_HIDE_BANNER, false)) }
     var settingsRestored by remember { mutableStateOf(false) }
@@ -307,6 +311,11 @@ fun CameraScreen() {
     LaunchedEffect(mirrorVertical) {
         trailProcessor.mirrorVertical = mirrorVertical
         prefs.edit().putBoolean(KEY_MIRROR_VERTICAL, mirrorVertical).apply()
+    }
+
+    LaunchedEffect(rotationalSymmetry) {
+        trailProcessor.rotationalSymmetry = rotationalSymmetry
+        prefs.edit().putInt(KEY_ROTATION_SYMMETRY, rotationalSymmetry).apply()
     }
 
     LaunchedEffect(fpsSelectedIndex) {
@@ -670,6 +679,29 @@ fun CameraScreen() {
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                var rotIndex by remember {
+                                    mutableFloatStateOf(
+                                        rotationSymmetryOptions.indexOf(rotationalSymmetry).coerceAtLeast(0).toFloat()
+                                    )
+                                }
+                                LaunchedEffect(rotationalSymmetry) {
+                                    rotIndex = rotationSymmetryOptions.indexOf(rotationalSymmetry).coerceAtLeast(0).toFloat()
+                                }
+                                ControlSlider(
+                                    label = "Kaleidoscope",
+                                    value = rotIndex,
+                                    onValueChange = {
+                                        rotIndex = Math.round(it).toFloat()
+                                            .coerceIn(0f, (rotationSymmetryOptions.size - 1).toFloat())
+                                    },
+                                    valueRange = 0f..(rotationSymmetryOptions.size - 1).toFloat(),
+                                    steps = rotationSymmetryOptions.size - 2,
+                                    displayValue = "${rotationSymmetryOptions[rotIndex.toInt()]}",
+                                    onValueChangeFinished = {
+                                        rotationalSymmetry = rotationSymmetryOptions[rotIndex.toInt()]
+                                    }
+                                )
                             }
                         }
                     }

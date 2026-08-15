@@ -10,6 +10,7 @@ import android.renderscript.RenderScript
 import android.renderscript.ScriptIntrinsicBlur
 import java.nio.ByteBuffer
 import kotlin.math.floor
+import kotlin.math.roundToInt
 
 enum class ColorOverrideMode { OFF, FADE, COLOR, WHITE, BLACK }
 
@@ -56,6 +57,17 @@ class TrailProcessor(private val context: Context) {
     var mirrorHorizontal: Boolean = false
     var mirrorVertical: Boolean = false
 
+    var rotationalSymmetry: Int = 0
+        set(value) { field = value.coerceAtLeast(0) }
+
+    private var cachedRotSymmetry = 0
+    private var cachedRotWidth = 0
+    private var cachedRotHeight = 0
+    private var rotCos: FloatArray? = null
+    private var rotSin: FloatArray? = null
+    private var rotCenterX = 0f
+    private var rotCenterY = 0f
+
     private var rsContext: RenderScript? = null
     private var blurScript: ScriptIntrinsicBlur? = null
     private var blurInputAlloc: Allocation? = null
@@ -79,6 +91,30 @@ class TrailProcessor(private val context: Context) {
         cachedSolidB = solidColor and 0xFF
     }
 
+    private fun ensureRotation() {
+        if (rotationalSymmetry == cachedRotSymmetry && currentWidth == cachedRotWidth && currentHeight == cachedRotHeight) return
+        cachedRotSymmetry = rotationalSymmetry
+        cachedRotWidth = currentWidth
+        cachedRotHeight = currentHeight
+        rotCenterX = (currentWidth - 1) / 2f
+        rotCenterY = (currentHeight - 1) / 2f
+        val n = rotationalSymmetry
+        if (n > 1) {
+            val cos = FloatArray(n - 1)
+            val sin = FloatArray(n - 1)
+            for (k in 1 until n) {
+                val a = 2.0 * Math.PI * k / n
+                cos[k - 1] = Math.cos(a).toFloat()
+                sin[k - 1] = Math.sin(a).toFloat()
+            }
+            rotCos = cos
+            rotSin = sin
+        } else {
+            rotCos = null
+            rotSin = null
+        }
+    }
+
     fun processFrame(src: ByteBuffer, width: Int, height: Int): Bitmap {
         if (width != currentWidth || height != currentHeight) {
             currentWidth = width
@@ -99,6 +135,7 @@ class TrailProcessor(private val context: Context) {
         }
 
         ensureDerived()
+        ensureRotation()
 
         val pBuf = pixelBuf!!
         val tPix = trailPixels!!
@@ -111,6 +148,7 @@ class TrailProcessor(private val context: Context) {
         val mirrorV = mirrorVertical
         val lastCol = width - 1
         val lastRow = height - 1
+        val rotN = rotationalSymmetry
 
         src.position(0)
         if (src !== cachedSrcBuf) {
@@ -180,6 +218,25 @@ class TrailProcessor(private val context: Context) {
                         if (m != i) {
                             tAge[m] = 1
                             tPix[m] = color
+                        }
+                    }
+                }
+                if (rotN > 1) {
+                    val cosArr = rotCos!!
+                    val sinArr = rotSin!!
+                    val x = i % width
+                    val y = i / width
+                    val dx = x - rotCenterX
+                    val dy = y - rotCenterY
+                    for (k in cosArr.indices) {
+                        val mx = (rotCenterX + dx * cosArr[k] - dy * sinArr[k]).roundToInt()
+                        val my = (rotCenterY + dx * sinArr[k] + dy * cosArr[k]).roundToInt()
+                        if (mx >= 0 && mx < width && my >= 0 && my < height) {
+                            val m = my * width + mx
+                            if (m != i) {
+                                tAge[m] = 1
+                                tPix[m] = color
+                            }
                         }
                     }
                 }
@@ -272,6 +329,11 @@ class TrailProcessor(private val context: Context) {
         rsContext = null
         blurCachedWidth = 0
         blurCachedHeight = 0
+        cachedRotSymmetry = 0
+        cachedRotWidth = 0
+        cachedRotHeight = 0
+        rotCos = null
+        rotSin = null
     }
 
     companion object {
