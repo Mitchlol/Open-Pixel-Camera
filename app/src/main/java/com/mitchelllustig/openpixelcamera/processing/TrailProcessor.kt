@@ -11,7 +11,7 @@ import android.renderscript.ScriptIntrinsicBlur
 import java.nio.ByteBuffer
 import kotlin.math.floor
 
-enum class ColorOverrideMode { OFF, COLOR, WHITE, FADE }
+enum class ColorOverrideMode { OFF, FADE, COLOR, WHITE, BLACK }
 
 class TrailProcessor(private val context: Context) {
 
@@ -128,6 +128,7 @@ class TrailProcessor(private val context: Context) {
             val overrideRgb = when (colorOverrideMode) {
                 ColorOverrideMode.COLOR -> solidColor
                 ColorOverrideMode.WHITE -> 0xFFFFFFFF.toInt()
+                ColorOverrideMode.BLACK -> 0xFF000000.toInt()
                 ColorOverrideMode.FADE -> {
                     if (fadeStartTimeNanos == 0L) fadeStartTimeNanos = System.nanoTime()
                     val elapsed = System.nanoTime() - fadeStartTimeNanos

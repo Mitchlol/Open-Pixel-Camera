@@ -288,7 +288,7 @@ fun CameraScreen() {
     }
 
     LaunchedEffect(solidColorHue, colorOverrideModeIndex) {
-        if (colorOverrideModeIndex == 1) {
+        if (ColorOverrideMode.entries[colorOverrideModeIndex] == ColorOverrideMode.COLOR) {
             trailProcessor.solidColor = hsvToArgb(solidColorHue, 1f, 1f)
         }
         prefs.edit().putFloat(KEY_SOLID_COLOR_HUE, solidColorHue).apply()
@@ -589,7 +589,7 @@ fun CameraScreen() {
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    listOf("Off", "Color", "White", "Fade").forEachIndexed { index, label ->
+                                    listOf("Off", "Fade", "Color", "White", "Black").forEachIndexed { index, label ->
                                         val active = colorOverrideModeIndex == index
                                         Box(
                                             modifier = Modifier
@@ -608,7 +608,7 @@ fun CameraScreen() {
                                         }
                                     }
                                 }
-                                if (colorOverrideModeIndex == 1) {
+                                if (ColorOverrideMode.entries[colorOverrideModeIndex] == ColorOverrideMode.COLOR) {
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = "Color",
@@ -652,7 +652,7 @@ fun CameraScreen() {
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Mirror Trails",
+                                    text = "Mirror",
                                     color = Color.White,
                                     style = MaterialTheme.typography.labelMedium
                                 )
