@@ -102,6 +102,7 @@ private const val KEY_MIRROR_VERTICAL = "mirror_vertical"
 private const val KEY_ROTATION_SYMMETRY = "rotation_symmetry"
 private const val KEY_SHIMMER = "shimmer"
 private const val KEY_HIDE_BANNER = "hide_banner"
+private const val KEY_THRESHOLD_PREVIEW = "threshold_preview"
 
 private val rotationSymmetryOptions = listOf(0, 3, 5, 6)
 
@@ -142,6 +143,7 @@ fun CameraScreen() {
     var mirrorVertical by remember { mutableStateOf(prefs.getBoolean(KEY_MIRROR_VERTICAL, false)) }
     var rotationalSymmetry by remember { mutableIntStateOf(prefs.getInt(KEY_ROTATION_SYMMETRY, 0)) }
     var shimmerEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_SHIMMER, false)) }
+    var thresholdPreview by remember { mutableStateOf(prefs.getBoolean(KEY_THRESHOLD_PREVIEW, false)) }
     var settingsTab by remember { mutableIntStateOf(0) }
     var hideBanner by remember { mutableStateOf(prefs.getBoolean(KEY_HIDE_BANNER, false)) }
     var settingsRestored by remember { mutableStateOf(false) }
@@ -324,6 +326,11 @@ fun CameraScreen() {
         prefs.edit().putBoolean(KEY_SHIMMER, shimmerEnabled).apply()
     }
 
+    LaunchedEffect(thresholdPreview) {
+        trailProcessor.thresholdPreviewEnabled = thresholdPreview
+        prefs.edit().putBoolean(KEY_THRESHOLD_PREVIEW, thresholdPreview).apply()
+    }
+
     LaunchedEffect(fpsSelectedIndex) {
         if (fpsOptions.isEmpty()) return@LaunchedEffect
         val fps = fpsOptions[fpsSelectedIndex]
@@ -371,6 +378,7 @@ fun CameraScreen() {
             CameraPreview(
                 cameraController = cameraController,
                 trailProcessor = trailProcessor,
+                thresholdPreview = thresholdPreview,
                 cameraActive = cameraActive,
                 videoRecorder = videoRecorder,
                 captureWidth = currentResolution.first,
@@ -847,6 +855,12 @@ fun CameraScreen() {
                                 iconType = PanelIconType.TORCH
                             )
                             PanelToggleButton(
+                                isActive = thresholdPreview,
+                                onClick = { thresholdPreview = !thresholdPreview },
+                                iconType = PanelIconType.EYE,
+                                iconTint = Color.Red
+                            )
+                            PanelToggleButton(
                                 isActive = showSettingsPanel,
                                 onClick = { showSettingsPanel = !showSettingsPanel },
                                 iconType = PanelIconType.OUTPUT
@@ -925,6 +939,7 @@ private fun RecordButton(
 private fun CameraPreview(
     cameraController: CameraController,
     trailProcessor: TrailProcessor,
+    thresholdPreview: Boolean,
     cameraActive: Boolean,
     videoRecorder: VideoRecorder,
     captureWidth: Int,
@@ -1001,6 +1016,10 @@ private fun CameraPreview(
                         if (canvas != null) {
                             try {
                                 canvas.drawBitmap(processed, 0f, 0f, null)
+                                val overlay = trailProcessor.thresholdPreview
+                                if (thresholdPreview && overlay != null) {
+                                    canvas.drawBitmap(overlay, 0f, 0f, null)
+                                }
                             } finally {
                                 holder.unlockCanvasAndPost(canvas)
                             }
@@ -1030,18 +1049,20 @@ private fun CameraPreview(
     }
 }
 
-private enum class PanelIconType { OUTPUT, TORCH }
+private enum class PanelIconType { OUTPUT, TORCH, EYE }
 
 @Composable
 private fun PanelToggleButton(
     isActive: Boolean,
     onClick: () -> Unit,
     iconType: PanelIconType,
+    iconTint: Color = Color.White.copy(alpha = if (isActive) 1f else 0.8f),
     modifier: Modifier = Modifier
 ) {
     val iconRes = when (iconType) {
         PanelIconType.OUTPUT -> R.drawable.ic_settings
         PanelIconType.TORCH -> R.drawable.ic_flashlight
+        PanelIconType.EYE -> if (isActive) R.drawable.ic_eye else R.drawable.ic_eye_off
     }
     val bgColor = if (isActive) Color.White.copy(alpha = 0.3f) else Color.Black.copy(alpha = 0.65f)
     val borderColor = Color.White.copy(alpha = if (isActive) 0.6f else 0.35f)
@@ -1060,7 +1081,7 @@ private fun PanelToggleButton(
         Icon(
             painter = painterResource(id = iconRes),
             contentDescription = null,
-            tint = Color.White.copy(alpha = if (isActive) 1f else 0.8f),
+            tint = iconTint,
             modifier = Modifier.size(20.dp)
         )
     }

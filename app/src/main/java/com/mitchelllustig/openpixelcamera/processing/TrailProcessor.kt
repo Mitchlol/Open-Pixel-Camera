@@ -63,6 +63,12 @@ class TrailProcessor(private val context: Context) {
 
     var shimmerEnabled: Boolean = false
 
+    var thresholdPreviewEnabled: Boolean = false
+    private var thresholdPreviewPixels: IntArray? = null
+    private var thresholdPreviewBitmap: Bitmap? = null
+    val thresholdPreview: Bitmap?
+        get() = if (thresholdPreviewEnabled) thresholdPreviewBitmap else null
+
     private var cachedRotSymmetry = 0
     private var cachedRotWidth = 0
     private var cachedRotHeight = 0
@@ -140,6 +146,9 @@ class TrailProcessor(private val context: Context) {
             trailPixels = IntArray(size)
             trailDisplay = IntArray(size)
             trailAge = ShortArray(size)
+            thresholdPreviewPixels = IntArray(size)
+            thresholdPreviewBitmap?.recycle()
+            thresholdPreviewBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             trailBitmap?.recycle()
             trailBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             frameBitmap?.recycle()
@@ -206,6 +215,12 @@ class TrailProcessor(private val context: Context) {
             val r = (pixel shr 16) and 0xFF
             val g = (pixel shr 8) and 0xFF
             val b = pixel and 0xFF
+
+            if (thresholdPreviewEnabled) {
+                thresholdPreviewPixels!![i] =
+                    if (r > thresholdValue || g > thresholdValue || b > thresholdValue) 0xFFFF0000.toInt()
+                    else Color.TRANSPARENT
+            }
 
             if (r > thresholdValue || g > thresholdValue || b > thresholdValue) {
                 val color = if (overrideActive) {
@@ -286,6 +301,10 @@ class TrailProcessor(private val context: Context) {
             }
         }
 
+        if (thresholdPreviewEnabled) {
+            thresholdPreviewBitmap!!.setPixels(thresholdPreviewPixels!!, 0, width, 0, 0, width, height)
+        }
+
         frameBitmap!!.setPixels(pBuf, 0, width, 0, 0, width, height)
 
         val trailSrc = if (shimmerEnabled) {
@@ -354,10 +373,13 @@ class TrailProcessor(private val context: Context) {
         trailBitmap = null
         frameBitmap?.recycle()
         frameBitmap = null
+        thresholdPreviewBitmap?.recycle()
+        thresholdPreviewBitmap = null
         pixelBuf = null
         trailPixels = null
         trailDisplay = null
         trailAge = null
+        thresholdPreviewPixels = null
         cachedSrcBuf = null
         cachedIntView = null
         currentWidth = 0
