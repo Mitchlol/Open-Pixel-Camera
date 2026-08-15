@@ -98,6 +98,8 @@ private const val KEY_FADE_PERCENT = "fade_percent"
 private const val KEY_COLOR_OVERRIDE_MODE = "color_override_mode"
 private const val KEY_SOLID_COLOR_HUE = "solid_color_hue"
 private const val KEY_BLUR_AMOUNT = "blur_amount"
+private const val KEY_MIRROR_HORIZONTAL = "mirror_horizontal"
+private const val KEY_MIRROR_VERTICAL = "mirror_vertical"
 private const val KEY_HIDE_BANNER = "hide_banner"
 
 @Composable
@@ -133,6 +135,8 @@ fun CameraScreen() {
     var colorOverrideModeIndex by remember { mutableIntStateOf(prefs.getInt(KEY_COLOR_OVERRIDE_MODE, 0)) }
     var solidColorHue by remember { mutableFloatStateOf(prefs.getFloat(KEY_SOLID_COLOR_HUE, 0f)) }
     var blurAmount by remember { mutableFloatStateOf(prefs.getFloat(KEY_BLUR_AMOUNT, 0f)) }
+    var mirrorHorizontal by remember { mutableStateOf(prefs.getBoolean(KEY_MIRROR_HORIZONTAL, false)) }
+    var mirrorVertical by remember { mutableStateOf(prefs.getBoolean(KEY_MIRROR_VERTICAL, false)) }
     var cameraTab by remember { mutableIntStateOf(0) }
     var hideBanner by remember { mutableStateOf(prefs.getBoolean(KEY_HIDE_BANNER, false)) }
     var settingsRestored by remember { mutableStateOf(false) }
@@ -293,6 +297,16 @@ fun CameraScreen() {
     LaunchedEffect(blurAmount) {
         trailProcessor.blurAmount = blurAmount / 100f
         prefs.edit().putFloat(KEY_BLUR_AMOUNT, blurAmount).apply()
+    }
+
+    LaunchedEffect(mirrorHorizontal) {
+        trailProcessor.mirrorHorizontal = mirrorHorizontal
+        prefs.edit().putBoolean(KEY_MIRROR_HORIZONTAL, mirrorHorizontal).apply()
+    }
+
+    LaunchedEffect(mirrorVertical) {
+        trailProcessor.mirrorVertical = mirrorVertical
+        prefs.edit().putBoolean(KEY_MIRROR_VERTICAL, mirrorVertical).apply()
     }
 
     LaunchedEffect(fpsSelectedIndex) {
@@ -567,7 +581,7 @@ fun CameraScreen() {
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Color Override",
-                                    color = Color.White.copy(alpha = 0.7f),
+                                    color = Color.White,
                                     style = MaterialTheme.typography.labelMedium
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -598,7 +612,7 @@ fun CameraScreen() {
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = "Color",
-                                        color = Color.White.copy(alpha = 0.7f),
+                                        color = Color.White,
                                         style = MaterialTheme.typography.labelMedium
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
@@ -635,6 +649,26 @@ fun CameraScreen() {
                                             )
                                         )
                                     }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Mirror Trails",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                                Row(modifier = Modifier.fillMaxWidth()) {
+                                    CheckboxRow(
+                                        label = "Horizontal",
+                                        checked = mirrorHorizontal,
+                                        onCheckedChange = { mirrorHorizontal = it },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    CheckboxRow(
+                                        label = "Vertical",
+                                        checked = mirrorVertical,
+                                        onCheckedChange = { mirrorVertical = it },
+                                        modifier = Modifier.weight(1f)
+                                    )
                                 }
                             }
                         }
@@ -1059,6 +1093,41 @@ private fun SettingsPanel(
             }
             content()
         }
+    }
+}
+
+@Composable
+private fun CheckboxRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(32.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onCheckedChange(!checked) },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = CheckboxDefaults.colors(
+                checkedColor = Color.White,
+                uncheckedColor = Color.White.copy(alpha = 0.6f),
+                checkmarkColor = Color.Black
+            )
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = label,
+            color = Color.White.copy(alpha = 0.9f),
+            style = MaterialTheme.typography.bodyMedium
+        )
     }
 }
 

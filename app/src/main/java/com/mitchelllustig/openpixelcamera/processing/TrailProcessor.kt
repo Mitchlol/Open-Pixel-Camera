@@ -53,6 +53,9 @@ class TrailProcessor(private val context: Context) {
     var blurAmount: Float = 0f
         set(value) { field = value.coerceIn(0f, 1f) }
 
+    var mirrorHorizontal: Boolean = false
+    var mirrorVertical: Boolean = false
+
     private var rsContext: RenderScript? = null
     private var blurScript: ScriptIntrinsicBlur? = null
     private var blurInputAlloc: Allocation? = null
@@ -104,6 +107,10 @@ class TrailProcessor(private val context: Context) {
         val thresholdValue = cachedThresholdValue
         val tLen = cachedTrailLength
         val fadeStart = cachedFadeStart
+        val mirrorH = mirrorHorizontal
+        val mirrorV = mirrorVertical
+        val lastCol = width - 1
+        val lastRow = height - 1
 
         src.position(0)
         if (src !== cachedSrcBuf) {
@@ -143,11 +150,37 @@ class TrailProcessor(private val context: Context) {
             val b = pixel and 0xFF
 
             if (r > thresholdValue || g > thresholdValue || b > thresholdValue) {
-                tAge[i] = 1
-                if (overrideActive) {
-                    tPix[i] = (0xFF shl 24) or (overrideR shl 16) or (overrideG shl 8) or overrideB
+                val color = if (overrideActive) {
+                    (0xFF shl 24) or (overrideR shl 16) or (overrideG shl 8) or overrideB
                 } else {
-                    tPix[i] = pixel or 0xFF000000.toInt()
+                    pixel or 0xFF000000.toInt()
+                }
+                tAge[i] = 1
+                tPix[i] = color
+                if (mirrorH || mirrorV) {
+                    val col = i % width
+                    val row = i / width
+                    if (mirrorH) {
+                        val m = row * width + (lastCol - col)
+                        if (m != i) {
+                            tAge[m] = 1
+                            tPix[m] = color
+                        }
+                    }
+                    if (mirrorV) {
+                        val m = (lastRow - row) * width + col
+                        if (m != i) {
+                            tAge[m] = 1
+                            tPix[m] = color
+                        }
+                    }
+                    if (mirrorH && mirrorV) {
+                        val m = (lastRow - row) * width + (lastCol - col)
+                        if (m != i) {
+                            tAge[m] = 1
+                            tPix[m] = color
+                        }
+                    }
                 }
             } else if (tAge[i] > 0) {
                 val age = tAge[i].toInt()
