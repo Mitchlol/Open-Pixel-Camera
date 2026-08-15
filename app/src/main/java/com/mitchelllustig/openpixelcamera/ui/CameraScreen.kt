@@ -1061,7 +1061,7 @@ private fun PanelToggleButton(
 ) {
     val iconRes = when (iconType) {
         PanelIconType.OUTPUT -> R.drawable.ic_settings
-        PanelIconType.TORCH -> R.drawable.ic_flashlight
+        PanelIconType.TORCH -> if (isActive) R.drawable.ic_flashlight else R.drawable.ic_flashlight_off
         PanelIconType.EYE -> if (isActive) R.drawable.ic_eye else R.drawable.ic_eye_off
     }
     val bgColor = if (isActive) Color.White.copy(alpha = 0.3f) else Color.Black.copy(alpha = 0.65f)
