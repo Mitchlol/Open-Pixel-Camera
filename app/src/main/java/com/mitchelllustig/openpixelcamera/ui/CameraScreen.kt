@@ -605,7 +605,7 @@ fun CameraScreen() {
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    listOf("Off", "Fade", "Color", "White", "Black").forEachIndexed { index, label ->
+                                    listOf("Off", "Fade", "RGB", "Color", "White", "Black").forEachIndexed { index, label ->
                                         val active = colorOverrideModeIndex == index
                                         Box(
                                             modifier = Modifier

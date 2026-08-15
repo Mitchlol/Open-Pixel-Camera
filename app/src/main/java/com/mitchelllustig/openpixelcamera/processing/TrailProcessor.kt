@@ -12,7 +12,7 @@ import java.nio.ByteBuffer
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
-enum class ColorOverrideMode { OFF, FADE, COLOR, WHITE, BLACK }
+enum class ColorOverrideMode { OFF, FADE, RGB, COLOR, WHITE, BLACK }
 
 class TrailProcessor(private val context: Context) {
 
@@ -81,6 +81,9 @@ class TrailProcessor(private val context: Context) {
     private var fadeStartTimeNanos: Long = 0L
     private val fadeDurationNanos = 10_000_000_000L
 
+    private var rgbColors: IntArray? = null
+    private var cachedRgbTrailLength = 0
+
     private fun ensureDerived() {
         if (threshold == cachedThreshold && trailLength == cachedTrailLength && fadePercent == cachedFadePct) return
         cachedThreshold = threshold
@@ -92,6 +95,16 @@ class TrailProcessor(private val context: Context) {
         cachedSolidR = (solidColor shr 16) and 0xFF
         cachedSolidG = (solidColor shr 8) and 0xFF
         cachedSolidB = solidColor and 0xFF
+        if (rgbColors == null || cachedRgbTrailLength != cachedTrailLength) {
+            cachedRgbTrailLength = cachedTrailLength
+            val len = cachedTrailLength
+            val colors = IntArray(len + 1)
+            for (age in 1..len) {
+                val hue = (age - 1).toFloat() / (len - 1).coerceAtLeast(1) * 300f
+                colors[age] = hsvToArgb(hue, 1f, 1f)
+            }
+            rgbColors = colors
+        }
     }
 
     private fun ensureRotation() {
@@ -166,11 +179,13 @@ class TrailProcessor(private val context: Context) {
         var overrideG = 0
         var overrideB = 0
         val overrideActive = colorOverrideMode != ColorOverrideMode.OFF
+        val rgbMode = colorOverrideMode == ColorOverrideMode.RGB
         if (overrideActive) {
             val overrideRgb = when (colorOverrideMode) {
                 ColorOverrideMode.COLOR -> solidColor
                 ColorOverrideMode.WHITE -> 0xFFFFFFFF.toInt()
                 ColorOverrideMode.BLACK -> 0xFF000000.toInt()
+                ColorOverrideMode.RGB -> 0xFFFF0000.toInt()
                 ColorOverrideMode.FADE -> {
                     if (fadeStartTimeNanos == 0L) fadeStartTimeNanos = System.nanoTime()
                     val elapsed = System.nanoTime() - fadeStartTimeNanos
@@ -252,7 +267,15 @@ class TrailProcessor(private val context: Context) {
                     tPix[i] = Color.TRANSPARENT
                 } else {
                     tAge[i] = newAge.toShort()
-                    if (newAge > fadeStart) {
+                    if (rgbMode) {
+                        val prevAlpha = (tPix[i] shr 24) and 0xFF
+                        tPix[i] = rgbColors!![newAge]
+                        if (newAge > fadeStart) {
+                            val remaining = tLen - age + 1
+                            val na = (prevAlpha * (remaining - 1) + remaining / 2) / remaining
+                            tPix[i] = (na shl 24) or (tPix[i] and 0x00FFFFFF)
+                        }
+                    } else if (newAge > fadeStart) {
                         val tp = tPix[i]
                         val ta = (tp shr 24) and 0xFF
                         val remaining = tLen - age + 1
@@ -355,6 +378,8 @@ class TrailProcessor(private val context: Context) {
         cachedRotHeight = 0
         rotCos = null
         rotSin = null
+        rgbColors = null
+        cachedRgbTrailLength = 0
     }
 
     companion object {
