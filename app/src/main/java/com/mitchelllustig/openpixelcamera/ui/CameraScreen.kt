@@ -1,7 +1,9 @@
 package com.mitchelllustig.openpixelcamera.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.PorterDuff
@@ -9,6 +11,7 @@ import android.net.Uri
 import android.provider.MediaStore
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -106,6 +109,16 @@ private const val KEY_THRESHOLD_PREVIEW = "threshold_preview"
 
 private val rotationSymmetryOptions = listOf(0, 3, 5, 6)
 
+/**
+ * Walks the [ContextWrapper] chain to find the hosting [Activity], if any.
+ * Needed because [LocalContext] may be a wrapper rather than the Activity itself.
+ */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 @Composable
 fun CameraScreen() {
     val context = LocalContext.current
@@ -199,6 +212,22 @@ fun CameraScreen() {
         onDispose {
             cameraController.close()
             trailProcessor.clear()
+        }
+    }
+
+    // Keep the screen on while recording (and only while recording), so the
+    // display never sleeps mid-capture. No WAKE_LOCK permission required; the
+    // flag is tied to the window and released whenever recording stops.
+    val activity = remember(context) { context.findActivity() }
+    DisposableEffect(isRecording, activity) {
+        val window = activity?.window
+        if (isRecording) {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
 
